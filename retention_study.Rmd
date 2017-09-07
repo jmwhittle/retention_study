@@ -1,0 +1,140 @@
+---
+title: "Retention study proposal"
+author: "Jason Whittle"
+date: "8/24/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## project info
+started 8/24/2017
+
+## Objective
+
+Accurately model f-s and f-f retention at SLCC with a propensity score model that is cross-validated.
+
+## Study plan
+
+1. Pull 5 year of student data for students who: pulled 7 years 201040-201720
+\begin{itemize}
+\item a. did not complete 
+\item b. transfer flag? no this is source of not retaining.
+\item c. add a flag for f-s retention and f-f in R.
+\item d. what data will be needed for a propensity score?
+\end{itemize}
+
+2. Split data up into a train and test group for cross-validation
+\begin{itemize}
+\item a. Use caret package in R
+\item b. randomize the data. create folds in caret
+\item c. decide on a 60/40 or 70/30 split
+\end{itemize}
+
+3. Use caret train to use "ranger"(random forest), "GLMNET", "GBM", "SVM"
+\begin{itemize}
+\item a. gbm package in R. Caret.train()
+\item b. run model. caret.resamples() to find the best model
+\item c. plot resamples() for 
+\end{itemize}
+
+4. Cross validate
+\begin{itemize}
+\item a. use GBM model on test set
+\item b. Use 'cut' into groups : maybe clustering would help with this?
+\item c. generate a ROC curve : caTools package colAUC(p class, actual, plotROC = T)
+\item d. what is the AUC?
+\item c. generate confusion matrix
+\item d. evaluate if model tweaking is required in step 3.
+\end{itemize}
+
+5. cluster analysis of PS
+\begin{itemize}
+\item cluster for test or train or whole data set?
+\item use PS for clustering analysis. What kind of predictive things can we see with this model?
+\item look at promise students predicted PS scores
+\end{itemize}
+
+6. post score analysis
+\begin{itemize}
+\item look for clusters or cluster algo. 
+\item characteristics of each cluster. zips, highschools, pell info, demos
+\end{itemize}
+
+# Uses for the retention model
+
+\begin{itemize}
+\item targeting students for retention programs.
+\item evaluating retention programs. Are retention programs targeting students who are unlikely to retain? Evidence of self-selection
+\item understand what factor predict retention
+\end{itemize}
+
+```{sql, eval = FALSE, echo=T}
+-- SQL code to pull data from enroll
+SELECT STUDENT_COURSE_ENROLLMENTS.PIDM, 
+STUDENT_COURSE_ENROLLMENTS.CRN, 
+STUDENT_COURSE_ENROLLMENTS.TERM_CODE, 
+STUDENT_COURSE_ENROLLMENTS.FINAL_GRADE,
+COURSE_LIST.INSTRUCTION_TYPE, 
+COURSE_LIST.CAMPUS,
+COURSE_LIST.TOTAL_ENROLLMENT, 
+COURSE_LIST.CTE_CODE, 
+COURSE_LIST.REMEDIAL_CODE, 
+COURSE_LIST.TERM_CODE, 
+COURSE_LIST.CRN, 
+COURSE_LIST.TERM_CODE, 
+COURSE_LIST.COURSE_SUBJECT, 
+COURSE_LIST.COURSE_NUMB, 
+STUDENT_LIST.PIDM, 
+STUDENT_LIST.COHORT_MIN_TERM, 
+STUDENT_LIST.BIRTH_DATE, 
+STUDENT_LIST.GENDER,
+STUDENT_LIST.ETHNICITY, 
+STUDENT_LIST.FIRST_GEN, 
+STUDENT_LIST.LAST_TERM,
+STUDENT_TERMS.PIDM, 
+STUDENT_TERMS.ENROLL_TERM, 
+STUDENT_TERMS.CUM_GPA_OVERALL, 
+STUDENT_TERMS.CREDITS_WITHDRAWN, 
+STUDENT_TERMS.CREDITS_ATT,
+STUDENT_TERMS.FED_LOAN, 
+STUDENT_TERMS.PELL_ELIG, 
+STUDENT_TERMS.FAFSA, 
+STUDENT_TERMS.PRIVATE_LOAN,
+STUDENT_TERMS.CREDITS_FAILED,
+STUDENT_TERMS.CUM_EARNED_OVERALL,
+STUDNET_TERMS.PROMISE_PAID,
+STUDENT_TERMS.PROMISE_OFFERED
+FROM STUDENT_COURSE_ENROLLMENTS 
+JOIN COURSE_LIST 
+ON STUDENT_COURSE_ENROLLMENTS.CRN = COURSE_LIST.CRN 
+AND STUDENT_COURSE_ENROLLMENTS.TERM_CODE = COURSE_LIST.TERM_CODE
+JOIN STUDENT_LIST 
+ON STUDENT_COURSE_ENROLLMENTS.PIDM = STUDENT_LIST.PIDM
+JOIN STUDENT_TERMS
+ON STUDENT_COURSE_ENROLLMENTS.PIDM = STUDENT_TERMS.PIDM
+AND STUDENT_COURSE_ENROLLMENTS.TERM_CODE = STUDENT_TERMS.ENROLL_TERM
+where STUDENT_COURSE_ENROLLMENTS.TERM_CODE not like '%50'
+AND STUDENT_COURSE_ENROLLMENTS.TERM_CODE not like '%30'
+AND STUDENT_COURSE_ENROLLMENTS.TERM_CODE IN  
+(201040, 201120, 
+201140, 201220, 
+201240, 201320,
+201340, 201420,
+201440, 201520,
+201540, 201620,
+201640, 201720)
+ORDER BY STUDENT_COURSE_ENROLLMENTS.TERM_CODE;
+```
+
+```{r, include=FALSE, echo=FALSE}
+library(tidyverse)
+library(caret)
+library(ranger)
+library(gbm)
+```
+
+```{r, echo=FALSE, include=FALSE}
+ret_data <- read_csv("retention_study.csv")
+```
