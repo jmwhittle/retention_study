@@ -72,6 +72,12 @@ Accurately model f-s and f-f retention at SLCC with a propensity score model tha
 
 ```{sql, eval = FALSE, echo=T}
 -- SQL code to pull data from enroll
+
+SELECT PIDM, S_YEAR, S_TERM, S_ENTRY_ACTION
+FROM SLCC_STUDENTS
+WHERE S_YEAR > 2009
+AND S_EXTRACT = 'E';
+
 SELECT STUDENT_COURSE_ENROLLMENTS.PIDM, 
 STUDENT_COURSE_ENROLLMENTS.CRN, 
 STUDENT_COURSE_ENROLLMENTS.TERM_CODE, 
@@ -86,6 +92,7 @@ COURSE_LIST.CRN,
 COURSE_LIST.TERM_CODE, 
 COURSE_LIST.COURSE_SUBJECT, 
 COURSE_LIST.COURSE_NUMB, 
+COURSE_LIST.COURSE_BEGIN_TIME,
 STUDENT_LIST.PIDM, 
 STUDENT_LIST.COHORT_MIN_TERM, 
 STUDENT_LIST.BIRTH_DATE, 
@@ -93,6 +100,8 @@ STUDENT_LIST.GENDER,
 STUDENT_LIST.ETHNICITY, 
 STUDENT_LIST.FIRST_GEN, 
 STUDENT_LIST.LAST_TERM,
+STUDENT_LIST.CURRENT_MAILING_ZIP,
+STUDENT_LIST.HIGH_SCHOOL_CODE,
 STUDENT_TERMS.PIDM, 
 STUDENT_TERMS.ENROLL_TERM, 
 STUDENT_TERMS.CUM_GPA_OVERALL, 
@@ -104,7 +113,7 @@ STUDENT_TERMS.FAFSA,
 STUDENT_TERMS.PRIVATE_LOAN,
 STUDENT_TERMS.CREDITS_FAILED,
 STUDENT_TERMS.CUM_EARNED_OVERALL,
-STUDNET_TERMS.PROMISE_PAID,
+STUDENT_TERMS.PROMISE_PAID,
 STUDENT_TERMS.PROMISE_OFFERED
 FROM STUDENT_COURSE_ENROLLMENTS 
 JOIN COURSE_LIST 
@@ -135,6 +144,134 @@ library(ranger)
 library(gbm)
 ```
 
-```{r, echo=FALSE, include=FALSE}
+```{r, echo=T, include=FALSE}
 ret_data <- read_csv("retention_study.csv")
 ```
+
+# Data cleaning and manipulation
+
+\begin{itemize}
+\item remove duplicate PIDM, ENROll_TERMS, and CRN, etc
+\item calculate age at term
+\item min and max course begin time
+\item gender dummy
+\item ethnicity dummies
+\item number of remedial courses in term
+\item first semester flag
+\item term eng 1010 flag
+\item term math 1010 flag
+\item number of CTE coures/total courses per term
+\end{itemize}
+
+Data should end up at student/term level. Data is starting out at student/course/term level. 
+
+```{r, echo=FALSE}
+retention_flag_raw <- read_csv("retenion_flag_raw.csv") # yes, it is spelled wrong
+
+# fixing the terms field
+retention_flag_raw$TERM <- ifelse(retention_flag_raw$S_TERM == "2", 40, 
+                                  ifelse(retention_flag_raw$S_TERM == "3", 20, 0))
+retention_flag_raw$YEAR <- ifelse(retention_flag_raw$S_TERM == "3", 
+                                  retention_flag_raw$S_YEAR, retention_flag_raw$S_YEAR - 1)
+
+retention_flag_raw$ENROLL_TERM <- paste(retention_flag_raw$YEAR, retention_flag_raw$TERM, sep="")
+ret_flag_data <- retention_flag_raw %>% 
+  filter(TERM != 0) %>% 
+  select(PIDM, ENROLL_TERM, S_ENTRY_ACTION)
+ret_flag_data$ENROLL_TERM <- as.integer(ret_flag_data$ENROLL_TERM)
+rm(retention_flag_raw)
+```
+
+```{r, echo=FALSE}
+ret_data <- ret_data[, !names(ret_data) %in% c("CRN_1", "TERM_CODE_1", "TERM_CODE_2", "PIDM_1", "PIDM_2", "ENROLL_TERM")]
+ret_data <- ret_data %>% 
+  left_join(ret_flag_data, by = c("PIDM" = "PIDM", "TERM_CODE" = "ENROLL_TERM"))
+rm(ret_flag_data)
+```
+
+```{r, echo=FALSE}
+# term age calculation
+ret_data$TERM_AGE <- join stv_term contrains relevent term dates: term start date.
+
+```
+
+```{r, echo=FALSE}
+# instrcution type simplification
+ret_data$inst_type <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" | 
+                               ret_data$INSTRUCTION_TYPE == "Lecture", "L", 
+                    ifelse(ret_data$INSTRUCTION_TYPE == "Online Lecture", "O",
+                           ifelse(ret_data$INSTRUCTION_TYPE == "Hybrid (Online + Classroom)", "H", "OTH"))) # complicates things on a student/term level
+
+ret_data$instrc_type_dum <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" | 
+                               ret_data$INSTRUCTION_TYPE == "Lecture", 1, 0)
+
+# gender dummy
+ret_data$male <- ifelse(ret_data$GENDER == "Male", 1, 0)
+
+# Ethnicity needs to be a factored variable. not an ordered factor
+ret_data$eth <- ifelse(ret_data$ETHNICITY == "Caucasian", "C", 
+                       ifelse(ret_data$ETHNICITY == "Hispanic/Latino/Latina", "HLL", 
+                              ifelse(ret_data$ETHNICITY == "Asian", "Asi", "oth_eth")))
+# first gen/no/unknown
+ret_data$first_gen <- ifelse(is.na(ret_data$FIRST_GEN) == TRUE, "NA",
+                             ifelse(ret_data$FIRST_GEN == "No", "NO", "FG"))
+
+
+# critical courses flags student/term
+ret_data$ENGL1010 <- ifelse(ret_data$COURSE_SUBJECT == "ENGL" & 
+                              ret_data$COURSE_NUMB == "1010", 1, 0)
+ret_data$MATH1010 <- ifelse(ret_data$COURSE_SUBJECT == "MATH" &
+                              ret_data$COURSE_NUMB == "1010", 1, 0)
+
+# 5 digit zip
+ret_data$zip <- substr(ret_data$CURRENT_MAILING_ZIP, 1, 5)
+
+# first semester
+ret_data$first_sem <- ifelse(ret_data$COHORT_MIN_TERM == ret_data$TERM_CODE, 1, 0)
+
+# promise flags
+ret_data$PROMISE_PAID[is.na(ret_data$PROMISE_PAID) == T] <- 0
+ret_data$PROMISE_OFFERED[is.na(ret_data$PROMISE_OFFERED) == T] <- 0
+ret_data$promise_p <- ifelse(ret_data$PROMISE_PAID > 0, 1, 0) # 727 total observations:  ret_data %>% group_by(PIDM) %>% filter(promise_p == 1) %>% distinct(PIDM) %>% View
+ret_data$promise_o <- ifelse(ret_data$PROMISE_OFFERED > 0, 1, 0) # 1094 total observations: ret_data %>% group_by(PIDM) %>% filter(promise_o == 1) %>% distinct(PIDM) %>% View
+
+# student/term level data to calculate. These will be joined to a student/terms data frame later
+student_term_calc <- ret_sums <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
+  summarise(max_time = max(COURSE_BEGIN_TIME), 
+            min_time = min(COURSE_BEGIN_TIME), 
+            avg_cls_sz = mean(TOTAL_ENROLLMENT),
+            crds_fails = sum(CREDITS_FAILED),
+            crds_with = sum(CREDITS_WITHDRAWN),
+            engl1010 = sum(ENGL1010),
+            math1010 = sum(MATH1010),
+            instrction_type = mean(instrc_type_dum)) # different amounts than student_term
+
+# number of _____ student/term. to be joined to a student/term df later
+cte_courses <- ret_data %>% filter(CTE_CODE == "V") %>% group_by(PIDM, TERM_CODE) %>% tally()
+rem_courses <- ret_data %>% filter(REMEDIAL_CODE == "R") %>% group_by(PIDM, TERM_CODE) %>% tally()
+
+# student level data to pull out. not necessary all avalible at student/term level
+# ent_cohort <- ret_data %>% group_by(PIDM) %>% distinct(PIDM, COHORT_MIN_TERM, HIGH_SCHOOL_CODE, CURRENT_MAILING_ZIP)
+
+# student/term level data to pull out
+student_term <- ret_data %>% group_by(PIDM, TERM_CODE) %>% 
+  distinct(FED_LOAN, CREDITS_ATT, FAFSA, 
+           PROMISE_PAID, PROMISE_OFFERED, PRIVATE_LOAN, 
+           CUM_GPA_OVERALL, CUM_EARNED_OVERALL, S_ENTRY_ACTION, 
+           first_gen, TERM_GPA, promise_p, 
+           promise_o, COHORT_MIN_TERM, HIGH_SCHOOL_CODE, 
+           CURRENT_MAILING_ZIP, male, eth, 
+           first_gen, zip, first_sem,
+           PELL_ELIG, LAST_TERM) # different amounts than student_term_calc
+
+# anti_join to see why is left out of student_term_calc
+
+test_join <- anti_join(student_term, student_term_calc, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
+
+
+# join 
+```
+
+# modeling promise inclusion first.
+
+As per Webb. Model retention first based on 
