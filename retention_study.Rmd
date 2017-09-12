@@ -73,14 +73,25 @@ Accurately model f-s and f-f retention at SLCC with a propensity score model tha
 ```{sql, eval = FALSE, echo=T}
 -- SQL code to pull data from enroll
 
+-- retention_flag
 SELECT PIDM, S_YEAR, S_TERM, S_ENTRY_ACTION
 FROM SLCC_STUDENTS
 WHERE S_YEAR > 2009
 AND S_EXTRACT = 'E';
 
-SELECT *
-FROM STVTERM;
+-- term start date
+SELECT STVTERM_CODE, STVTERM_START_DATE
+FROM STVTERM
+WHERE STVTERM_CODE 
+IN (201040, 201120, 
+201140, 201220, 
+201240, 201320,
+201340, 201420,
+201440, 201520,
+201540, 201620,
+201640, 201720);
 
+-- retention study
 SELECT STUDENT_COURSE_ENROLLMENTS.PIDM, 
 STUDENT_COURSE_ENROLLMENTS.CRN, 
 STUDENT_COURSE_ENROLLMENTS.TERM_CODE, 
@@ -143,6 +154,7 @@ ORDER BY STUDENT_COURSE_ENROLLMENTS.TERM_CODE;
 
 ```{r, include=FALSE, echo=FALSE}
 library(tidyverse)
+library(lubridate)
 library(caret)
 library(ranger)
 library(gbm)
@@ -194,9 +206,23 @@ rm(ret_flag_data)
 ```
 
 ```{r, echo=FALSE}
-# term age calculation
-ret_data$TERM_AGE <- join stv_term contrains relevent term dates: term start date.
+stvterm <- read_csv("stvterm.csv")
+ret_data <- ret_data %>% left_join(stvterm, by = c("TERM_CODE" = "STVTERM_CODE"))
 
+ret_data$start_date <- dmy(ret_data$STVTERM_START_DATE)
+ret_data$birth_date <- dmy(ret_data$BIRTH_DATE)
+ret_data$term_age <- as.numeric((ret_data$start_date - ret_data$birth_date)/365)
+
+# problem resolved. Problem was a YY default setting rather than YYYY in Oracle Developer.
+# if you have a two-digit year
+# century_adjustment_function <- function(x, year=1918){
+#   m <- year(x) %% 100
+#   year(x) <- ifelse(m > year %% 100, 1900+m, 2000+m)
+#   x
+# }
+# 
+# ret_data$birth_date <- century_adjustment_function(ret_data$birth_date)
+rm(stvterm)
 ```
 
 ```{r, echo=FALSE}
@@ -263,17 +289,72 @@ student_term <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
            PROMISE_PAID, PROMISE_OFFERED, PRIVATE_LOAN, 
            CUM_GPA_OVERALL, CUM_EARNED_OVERALL, S_ENTRY_ACTION, 
            first_gen, TERM_GPA, promise_p, 
-           promise_o, COHORT_MIN_TERM, HIGH_SCHOOL_CODE, 
-           CURRENT_MAILING_ZIP, male, eth, 
-           first_gen, zip, first_sem,
-           PELL_ELIG, LAST_TERM) # different amounts than student_term_calc
+           promise_o, COHORT_MIN_TERM, HIGH_SCHOOL_CODE,
+           male, eth,
+           zip, first_sem, PELL_ELIG,
+           LAST_TERM, term_age) # different amounts than student_term_calc
 
-# anti_join to see why is left out of student_term_calc
+# joining into a student/term dataframe
+test_join <- left_join(student_term, student_term_calc, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
+test_join <- test_join %>% left_join(cte_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
+full_data <- test_join %>% left_join(rem_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
+colnames(full_data)[33:34] <- c("cte_courses", "rem_courses")
 
-test_join <- anti_join(student_term, student_term_calc, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
+# remove students who recived and award after 201030
+# anti_join by PIDM and AWARD_TERM = TERM_CODE
+awards <- read_csv("awards.csv")
+awards <- cbind(awards, 1)
+colnames(awards)[3] <- "award_flag"
+# not perfect but it should work. several students have multiple awards.
+full_data_awards <- full_data %>% left_join(awards, by = c("PIDM" = "PIDM", "TERM_CODE" = "AWARD_TERM"))
 
 
-# join 
+# subseting the data for the PS promise model
+
+# the eligible set of students to evaluated causality on: continuing students in 201640 who didn't graduate and had never recieved an award. 
+# the 201640 variables to match on (not impacted by treatment):
+elig_2016_set <- full_data_awards %>% 
+  filter(TERM_CODE < 201700) %>% 
+  filter(is.na(award_flag) == T) %>%
+  filter(TERM_CODE == 201640) %>%
+  filter(S_ENTRY_ACTION == "CS") %>%
+  select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
+         crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
+         CUM_GPA_OVERALL, CUM_EARNED_OVERALL, FAFSA, PELL_ELIG) 
+
+# variables prior to 201640 to match on
+pre_201620 <- full_data_awards %>%
+  filter(TERM_CODE == 201620) %>%
+  filter(is.na(award_flag) == T) %>%
+  select(PIDM, TERM_GPA, CREDITS_ATT, 
+         FED_LOAN, PRIVATE_LOAN, first_sem, 
+         instrction_type, cte_courses, rem_courses,
+         engl1010, math1010, avg_cls_sz)
+
+colnames(pre_201620) <- c("PIDM", "TERM_GPA_201620", "CREDITS_ATT_201620", 
+         "FED_LOAN_201620", "PRIVATE_LOAN_201620", "first_sem_201620", 
+         "instrction_type_201620", "cte_courses_201620", "rem_courses_201620",
+         "engl1010_201620", "math1010_201620", "avg_cls_sz_201620")
+
+pre_201540 <- full_data_awards %>%
+  filter(TERM_CODE == 201540) %>%
+  filter(is.na(award_flag) == T) %>%
+  select(PIDM, TERM_GPA, CREDITS_ATT, 
+         FED_LOAN, PRIVATE_LOAN, first_sem, 
+         instrction_type, cte_courses, rem_courses,
+         engl1010, math1010, avg_cls_sz)
+
+colnames(pre_201540) <- c("PIDM", "TERM_GPA_201540", "CREDITS_ATT_201540", 
+         "FED_LOAN_201540", "PRIVATE_LOAN_201540", "first_sem_201540", 
+         "instrction_type_201540", "cte_courses_201540", "rem_courses_201540",
+         "engl1010_201540", "math1010_201540", "avg_cls_sz_201540")
+
+pre_join <- pre_201620 %>% full_join(pre_201540, by = "PIDM")
+
+test_join <- elig_2016_set %>% inner_join(pre_join, by = "PIDM")
+
+
+
 ```
 
 # modeling promise inclusion first.
