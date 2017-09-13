@@ -266,7 +266,7 @@ ret_data$promise_p <- ifelse(ret_data$PROMISE_PAID > 0, 1, 0) # 727 total observ
 ret_data$promise_o <- ifelse(ret_data$PROMISE_OFFERED > 0, 1, 0) # 1094 total observations: ret_data %>% group_by(PIDM) %>% filter(promise_o == 1) %>% distinct(PIDM) %>% View
 
 # student/term level data to calculate. These will be joined to a student/terms data frame later
-student_term_calc <- ret_sums <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
+student_term_calc <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
   summarise(max_time = max(COURSE_BEGIN_TIME), 
             min_time = min(COURSE_BEGIN_TIME), 
             avg_cls_sz = mean(TOTAL_ENROLLMENT),
@@ -307,7 +307,7 @@ awards <- cbind(awards, 1)
 colnames(awards)[3] <- "award_flag"
 # not perfect but it should work. several students have multiple awards.
 full_data_awards <- full_data %>% left_join(awards, by = c("PIDM" = "PIDM", "TERM_CODE" = "AWARD_TERM"))
-
+rm(awards, cte_courses, rem_courses, ret_flag_data, ret_sums,  ret_data, student_term, student_term_calc, test_join)
 
 # subseting the data for the PS promise model
 
@@ -318,6 +318,7 @@ elig_2016_set <- full_data_awards %>%
   filter(is.na(award_flag) == T) %>%
   filter(TERM_CODE == 201640) %>%
   filter(S_ENTRY_ACTION == "CS") %>%
+  filter(PELL_ELIG == 1) %>%
   select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
          crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
          CUM_GPA_OVERALL, CUM_EARNED_OVERALL, FAFSA, PELL_ELIG) 
@@ -331,7 +332,7 @@ pre_201620 <- full_data_awards %>%
          instrction_type, cte_courses, rem_courses,
          engl1010, math1010, avg_cls_sz)
 
-colnames(pre_201620) <- c("PIDM", "TERM_GPA_201620", "CREDITS_ATT_201620", 
+colnames(pre_201620) <- c("TERM_201620", "PIDM", "TERM_GPA_201620",  "CREDITS_ATT_201620", 
          "FED_LOAN_201620", "PRIVATE_LOAN_201620", "first_sem_201620", 
          "instrction_type_201620", "cte_courses_201620", "rem_courses_201620",
          "engl1010_201620", "math1010_201620", "avg_cls_sz_201620")
@@ -344,19 +345,163 @@ pre_201540 <- full_data_awards %>%
          instrction_type, cte_courses, rem_courses,
          engl1010, math1010, avg_cls_sz)
 
-colnames(pre_201540) <- c("PIDM", "TERM_GPA_201540", "CREDITS_ATT_201540", 
+colnames(pre_201540) <- c("TERM_201540", "PIDM", "TERM_GPA_201540",  "CREDITS_ATT_201540", 
          "FED_LOAN_201540", "PRIVATE_LOAN_201540", "first_sem_201540", 
          "instrction_type_201540", "cte_courses_201540", "rem_courses_201540",
          "engl1010_201540", "math1010_201540", "avg_cls_sz_201540")
+```
 
-pre_join <- pre_201620 %>% full_join(pre_201540, by = "PIDM")
+```{r, echo = FALSE}
+# joining pre 201640 matching covariates
+pre_201640 <- full_join(pre_201540, pre_201620,  by = "PIDM")
 
-test_join <- elig_2016_set %>% inner_join(pre_join, by = "PIDM")
+# joing 201640 and pre-201640 data together.
+ps_data <- elig_2016_set %>% inner_join(pre_201640, by = "PIDM")
 
+# ps_data %>% filter(is.na(TERM_201540) == T & is.na(TERM_GPA_201620)== T) %>% View() # =0!
+# ps_data %>% filter(is.na(CUM_GPA_OVERALL) == T) %>% View() # students who haven't earned a grade
+# removing them. CUM_GPA is a big thing to match on. None of the 107 are promise. 
 
+ps_data <- ps_data %>% filter(is.na(CUM_GPA_OVERALL) == F)
 
+```
+
+```{r, echo=FALSE}
+# maybe the NAs make this problem
+# dealing with NAs in the data prior to matching
+# appropriate to turn into 0
+# ps_data$crds_fails
+# ps_data$crds_with
+# ps_data$CREDITS_ATT_201540
+# ps_data$FED_LOAN_201540
+# ps_data$PRIVATE_LOAN_201540
+# ps_data$first_sem_201540
+# 
+# # columns to be removed/ignored
+# ps_data$TERM_201540
+# ps_data$TERM_201620
+# 
+# # how to handle NAs for
+# ps_data$instrction_type_201540
+```
+
+```{r}
+# two seperate matches
+# 201620 
+ps_data_201620 <- elig_2016_set %>% inner_join(pre_201620, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
+# dim(ps_data_201620) # 9671 by 26
+# NAs
+ps_data_201620$crds_fails[is.na(ps_data_201620$crds_fails) == T] <- 0
+ps_data_201620$crds_with[is.na(ps_data_201620$crds_with) == T] <- 0
+ps_data_201620$cte_courses_201620[is.na(ps_data_201620$cte_courses_201620) == T] <- 0
+ps_data_201620$rem_courses_201620[is.na(ps_data_201620$rem_courses_201620) == T] <- 0
+ps_data_201620$PELL_ELIG <- as.double(ps_data_201620$PELL_ELIG)
+ps_data_201620$PELL_ELIG[is.na(ps_data_201620$PELL_ELIG) == T] <- 0
+ps_data_201620$eth <- as.factor(ps_data_201620$eth)
+ps_data_201620$eth[is.na(ps_data_201620$eth) == T] <- "oth_eth"
+ps_data_201620$first_gen <- as.factor(ps_data_201620$first_gen)
+
+# 201540
+ps_data_201540 <- elig_2016_set %>% inner_join(pre_201540, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
+# dim(ps_data_201540) # 8548 by 26
+#NAs
+ps_data_201540$crds_fails[is.na(ps_data_201540$crds_fails) == T] <- 0
+ps_data_201540$crds_with[is.na(ps_data_201540$crds_with) == T] <- 0
+ps_data_201540$cte_courses_201540[is.na(ps_data_201540$cte_courses_201540) == T] <- 0
+ps_data_201540$rem_courses_201540[is.na(ps_data_201540$rem_courses_201540) == T] <- 0
+ps_data_201540$PELL_ELIG <- as.double(ps_data_201540$PELL_ELIG)
+ps_data_201540$PELL_ELIG[is.na(ps_data_201540$PELL_ELIG) == T] <- 0
+ps_data_201540$eth <- as.factor(ps_data_201540$eth)
+ps_data_201540$eth[is.na(ps_data_201540$eth) == T] <- "oth_eth"
+ps_data_201540$first_gen <- as.factor(ps_data_201540$first_gen)
+
+# both 201540 & 201620
+
+int_join <- pre_201540 %>% inner_join(pre_201620, by = "PIDM")
+ps_1516 <- elig_2016_set %>% inner_join(int_join, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
+rm(int_join)
+# dim(ps_1516) # 7118 by 38
+
+ps_1516$crds_fails[is.na(ps_1516$crds_fails) == T] <- 0
+ps_1516$crds_with[is.na(ps_1516$crds_with) == T] <- 0
+ps_1516$cte_courses_201540[is.na(ps_1516$cte_courses_201540) == T] <- 0
+ps_1516$rem_courses_201540[is.na(ps_1516$rem_courses_201540) == T] <- 0
+ps_1516$cte_courses_201620[is.na(ps_1516$cte_courses_201620) == T] <- 0
+ps_1516$rem_courses_201620[is.na(ps_1516$rem_courses_201620) == T] <- 0
+ps_1516$PELL_ELIG <- as.double(ps_1516$PELL_ELIG)
+ps_1516$PELL_ELIG[is.na(ps_1516$PELL_ELIG) == T] <- 0
+ps_1516$eth <- as.factor(ps_1516$eth)
+ps_1516$eth[is.na(ps_1516$eth) == T] <- "oth_eth"
+ps_1516$first_gen <- as.factor(ps_1516$first_gen)
 ```
 
 # modeling promise inclusion first.
 
 As per Webb. Model retention first based on 
+
+```{r, echo=FALSE}
+# using ps_1516 (both 1540 & 1620) 
+# 160 promise students in the data set
+ps_1516 <- ps_1516[, !names(ps_1516) %in% c("TERM_201540", "TERM_201620", "TERM_CODE", "first_sem_201620")] # there was no variation in first_sem_201620
+
+# library(twang)
+# ps_model_twang <- ps(promise_p ~ ., data = ps_1516)
+
+# Generalized boosted regression models
+library(gbm)
+ps_model_gbm <- gbm(promise_p ~ . - PIDM, data = ps_1516, n.trees = 10000)
+n <- gbm.perf(ps_model_gbm) # 5639
+plot(ps_model_gbm, i.var = 1)
+pretty.gbm.tree(ps_model_gbm)
+print(ps_model_gbm)
+
+ps_gbm <- predict(ps_model_gbm, n.trees = 5639, ps_1516, type = "response")
+
+ps_gbm
+summary(ps_gbm)
+
+blah <- cbind(ps_gbm)
+
+ps_1516_gbm <- data.frame(ps_1516, blah)
+rm(blah)
+
+# Random forest
+library(ranger)
+ps_model_ranger <- ranger(as.factor(promise_p) ~ . -PIDM, num.trees = 500, data = ps_1516, write.forest = TRUE, probability = TRUE)
+print(ps_model_ranger)
+
+ps_ranger <- predict(ps_model_ranger, ps_1516, type = "response", num.trees = 250) # way! over fitted. Perfectly predicts essentially 
+
+blah <- cbind(ps_ranger$predictions)
+ps_1516_ranger <- data.frame(ps_1516, blah[,2])
+rm(blah)
+
+# logistic regression: scale all variables first? interact variables?
+ps_model_glm <- glm(promise_p ~ . - PIDM, data = ps_1516, family = "binomial")
+summary(ps_model_glm)
+
+ps_glm <- predict(ps_model_glm, ps_1516, type = "response")
+
+blah <- cbind(ps_glm)
+ps_1516_glm <- data.frame(ps_1516, blah)
+rm(blah)
+```
+
+```{r, echo=FALSE}
+# more plots
+ps_1516_gbm %>%
+  ggplot() + 
+  geom_histogram(aes(ps_gbm)) +
+  facet_wrap(~as.factor(promise_p), scales = "free")
+  
+ps_1516_ranger %>%
+  ggplot() + 
+  geom_histogram(aes(blah...2.)) +
+  facet_wrap(~as.factor(promise_p), scales = "free")
+
+ps_1516_glm %>%
+  ggplot() + 
+  geom_histogram(aes(ps_glm)) +
+  facet_wrap(~as.factor(promise_p), scales = "free")
+```
+
