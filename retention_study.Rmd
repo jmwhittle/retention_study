@@ -153,7 +153,7 @@ ORDER BY STUDENT_COURSE_ENROLLMENTS.TERM_CODE;
 ```
 
 ```{r, include=FALSE, echo=FALSE}
-library(tidyverse)
+library(tidyverse); theme_set(theme_minimal())
 library(lubridate)
 library(caret)
 library(ranger)
@@ -191,9 +191,11 @@ retention_flag_raw$YEAR <- ifelse(retention_flag_raw$S_TERM == "3",
                                   retention_flag_raw$S_YEAR, retention_flag_raw$S_YEAR - 1)
 
 retention_flag_raw$ENROLL_TERM <- paste(retention_flag_raw$YEAR, retention_flag_raw$TERM, sep="")
+
 ret_flag_data <- retention_flag_raw %>% 
   filter(TERM != 0) %>% 
-  select(PIDM, ENROLL_TERM, S_ENTRY_ACTION)
+  dplyr::select(PIDM, ENROLL_TERM, S_ENTRY_ACTION)
+
 ret_flag_data$ENROLL_TERM <- as.integer(ret_flag_data$ENROLL_TERM)
 rm(retention_flag_raw)
 ```
@@ -267,7 +269,7 @@ ret_data$promise_o <- ifelse(ret_data$PROMISE_OFFERED > 0, 1, 0) # 1094 total ob
 
 # student/term level data to calculate. These will be joined to a student/terms data frame later
 student_term_calc <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
-  summarise(max_time = max(COURSE_BEGIN_TIME), 
+  dplyr::summarise(max_time = max(COURSE_BEGIN_TIME), 
             min_time = min(COURSE_BEGIN_TIME), 
             avg_cls_sz = mean(TOTAL_ENROLLMENT),
             crds_fails = sum(CREDITS_FAILED),
@@ -308,7 +310,9 @@ colnames(awards)[3] <- "award_flag"
 # not perfect but it should work. several students have multiple awards.
 full_data_awards <- full_data %>% left_join(awards, by = c("PIDM" = "PIDM", "TERM_CODE" = "AWARD_TERM"))
 rm(awards, cte_courses, rem_courses, ret_flag_data, ret_sums,  ret_data, student_term, student_term_calc, test_join)
+```
 
+```{r, echo=FALSE, eval=FALSE}
 # subseting the data for the PS promise model
 
 # the eligible set of students to evaluated causality on: continuing students in 201640 who didn't graduate and had never recieved an award. 
@@ -351,7 +355,7 @@ colnames(pre_201540) <- c("TERM_201540", "PIDM", "TERM_GPA_201540",  "CREDITS_AT
          "engl1010_201540", "math1010_201540", "avg_cls_sz_201540")
 ```
 
-```{r, echo = FALSE}
+```{r, echo = FALSE, eval=FALSE}
 # joining pre 201640 matching covariates
 pre_201640 <- full_join(pre_201540, pre_201620,  by = "PIDM")
 
@@ -385,7 +389,7 @@ ps_data <- ps_data %>% filter(is.na(CUM_GPA_OVERALL) == F)
 # ps_data$instrction_type_201540
 ```
 
-```{r}
+```{r, echo=FALSE, eval=FALSE}
 # two seperate matches
 # 201620 
 ps_data_201620 <- elig_2016_set %>% inner_join(pre_201620, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
@@ -439,7 +443,8 @@ ps_1516$first_gen <- as.factor(ps_1516$first_gen)
 
 As per Webb. Model retention first based on 
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, eval=FALSE}
+library(caret)
 # using ps_1516 (both 1540 & 1620) 
 # 160 promise students in the data set
 ps_1516 <- ps_1516[, !names(ps_1516) %in% c("TERM_201540", "TERM_201620", "TERM_CODE", "first_sem_201620")] # there was no variation in first_sem_201620
@@ -449,13 +454,18 @@ ps_1516 <- ps_1516[, !names(ps_1516) %in% c("TERM_201540", "TERM_201620", "TERM_
 
 # Generalized boosted regression models
 library(gbm)
-ps_model_gbm <- gbm(promise_p ~ . - PIDM, data = ps_1516, n.trees = 10000)
+ps_model_gbm <- gbm(promise_p ~ . - PIDM, 
+                    data = ps_1516, 
+                    n.trees = 10000)
 n <- gbm.perf(ps_model_gbm) # 5639
 plot(ps_model_gbm, i.var = 1)
 pretty.gbm.tree(ps_model_gbm)
 print(ps_model_gbm)
 
-ps_gbm <- predict(ps_model_gbm, n.trees = 5639, ps_1516, type = "response")
+ps_gbm <- predict(ps_model_gbm, 
+                  n.trees = 5639, 
+                  ps_1516, 
+                  type = "response")
 
 ps_gbm
 summary(ps_gbm)
@@ -467,27 +477,76 @@ rm(blah)
 
 # Random forest
 library(ranger)
-ps_model_ranger <- ranger(as.factor(promise_p) ~ . -PIDM, num.trees = 500, data = ps_1516, write.forest = TRUE, probability = TRUE)
+ps_model_ranger <- ranger(as.factor(promise_p) ~ . -PIDM, 
+                          num.trees = 500, 
+                          data = ps_1516, 
+                          write.forest = TRUE, 
+                          probability = TRUE)
+
 print(ps_model_ranger)
 
-ps_ranger <- predict(ps_model_ranger, ps_1516, type = "response", num.trees = 250) # way! over fitted. Perfectly predicts essentially 
+ps_ranger <- predict(ps_model_ranger, ps_1516, 
+                     type = "response", 
+                     num.trees = 250) # way! over fitted. Perfectly predicts essentially 
 
 blah <- cbind(ps_ranger$predictions)
 ps_1516_ranger <- data.frame(ps_1516, blah[,2])
 rm(blah)
 
 # logistic regression: scale all variables first? interact variables?
-ps_model_glm <- glm(promise_p ~ . - PIDM, data = ps_1516, family = "binomial")
+ps_model_glm <- glm(promise_p ~ . - PIDM, 
+                    data = ps_1516, 
+                    family = "binomial")
 summary(ps_model_glm)
 
+X <- 
 ps_glm <- predict(ps_model_glm, ps_1516, type = "response")
 
 blah <- cbind(ps_glm)
 ps_1516_glm <- data.frame(ps_1516, blah)
 rm(blah)
+
+# gbm
+set.seed(42)
+model_gbm <- train(as.factor(promise_p) ~ . -PIDM, 
+               data = ps_1516, 
+               method = "gbm", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
+
+ps_caret <- predict(model_gbm, ps_1516, type = "prob")
+ps_gbm <- cbind(ps_caret$`1`)
+ps_caret_gbm <- data.frame(ps_1516, ps_gbm)
+rm(ps_gbm)
+
+# logit
+sed.seed(42)
+model_glm <- train(as.factor(promise_p) ~ . -PIDM, 
+               data = ps_1516, 
+               method = "glm", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
+
+ps_c
+
+# ranger
+set.seed(42)
+model_ranger <- train(as.factor(promise_p) ~ . -PIDM, 
+               data = ps_1516, 
+               method = "ranger", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
+
+ps_caret <- predict(model_ranger, ps_1516, type = "prob")
+ps_ranger <- cbind(ps_caret$`1`)
+ps_caret_ranger <- data.frame(ps_1516, ps_ranger)
+rm(ps_ranger)
 ```
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, eval=FALSE}
 # more plots
 ps_1516_gbm %>%
   ggplot() + 
@@ -503,5 +562,78 @@ ps_1516_glm %>%
   ggplot() + 
   geom_histogram(aes(ps_glm)) +
   facet_wrap(~as.factor(promise_p), scales = "free")
+
+# caret plots
+ps_caret_gbm %>%
+  ggplot() + 
+  geom_histogram(aes(ps_gbm)) + 
+  facet_wrap(~as.factor(promise_p), scales = "free")
+
+ps_caret_gbm %>%
+  ggplot() + 
+  geom_density(aes(ps_gbm, col = as.factor(promise_p))) +
+  xlab("propensity scores from gbm") + 
+  ylab("") 
+```
+
+# Jessie's idea
+
+
+Generate propensity scores for all exact match on minimum cohort year.
+
+```{r, echo=FALSE}
+# select students enrolled in 201640 who did not graduate in 201640
+full_data_awards$PIDM <- as.character(full_data_awards$PIDM)
+pidm_201640 <- full_data_awards %>% 
+  filter(TERM_CODE == 201640) %>% 
+  filter(is.na(award_flag) == T) %>% 
+  filter(PELL_ELIG == 1) %>% 
+  dplyr::select(PIDM, TERM_CODE) # 5975... 5974 unique
+
+elig_2016_set <- full_data_awards %>% 
+  dplyr::semi_join(pidm_201640, by = "PIDM") # student/term 
+
+fixed_2016 <- elig_2016_set %>% filter(TERM_CODE == 201640) %>% select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
+         crds_fails, crds_with, COHORT_MIN_TERM, promise_p, CUM_GPA_OVERALL, CUM_EARNED_OVERALL)
+
+# elig_2016_set %>% group_by(COHORT_MIN_TERM) %>% tally() %>% View
+# elig_2016_set %>% group_by(COHORT_MIN_TERM) %>% filter(promise_p == 1) %>% tally() %>% View
+
+# both 2015 to 2016
+
+# just 2016
+
+# just 2015
+
+# all other cs
+
+# all first semester
+
+fixed_cov <- full_data_awards %>% 
+  filter(TERM_CODE == 201640) %>%
+  dplyr::select( eth, male, COHORT_MIN_TERM,
+                zip, HIGH_SCHOOL_CODE, promise_p,
+                first_gen, CUM_GPA_OVERALL, CUM_EARNED_OVERALL)
+
+ps_set <- 
+```
+
+```{r, echo=FALSE}
+library(caret)
+model_gbm <- train(as.factor(promise_p) ~ . -PIDM, 
+                  data = ps_set, 
+               method = "gbm", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
+
+```
+
+
+
+```{r, echo=FALSE}
+# matching
+library(Matching)
+
 ```
 
