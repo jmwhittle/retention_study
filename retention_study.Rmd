@@ -91,6 +91,9 @@ IN (201040, 201120,
 201540, 201620,
 201640, 201720);
 
+-- add former concurrent enrollment
+-- credits failed seems fishy PIDM 411155
+
 -- retention study
 SELECT STUDENT_COURSE_ENROLLMENTS.PIDM, 
 STUDENT_COURSE_ENROLLMENTS.CRN, 
@@ -215,15 +218,6 @@ ret_data$start_date <- dmy(ret_data$STVTERM_START_DATE)
 ret_data$birth_date <- dmy(ret_data$BIRTH_DATE)
 ret_data$term_age <- as.numeric((ret_data$start_date - ret_data$birth_date)/365)
 
-# problem resolved. Problem was a YY default setting rather than YYYY in Oracle Developer.
-# if you have a two-digit year
-# century_adjustment_function <- function(x, year=1918){
-#   m <- year(x) %% 100
-#   year(x) <- ifelse(m > year %% 100, 1900+m, 2000+m)
-#   x
-# }
-# 
-# ret_data$birth_date <- century_adjustment_function(ret_data$birth_date)
 rm(stvterm)
 ```
 
@@ -236,6 +230,15 @@ ret_data$inst_type <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" |
 
 ret_data$instrc_type_dum <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" | 
                                ret_data$INSTRUCTION_TYPE == "Lecture", 1, 0)
+
+# adding full career instrcution type value
+inst <- ret_data %>% 
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  group_by(PIDM) %>%
+  summarise(inst = mean(instrc_type_dum)) %>%
+  ungroup()
+
+ret_data <- ret_data %>% left_join(inst, by = "PIDM")
 
 # gender dummy
 ret_data$male <- ifelse(ret_data$GENDER == "Male", 1, 0)
@@ -255,6 +258,30 @@ ret_data$ENGL1010 <- ifelse(ret_data$COURSE_SUBJECT == "ENGL" &
 ret_data$MATH1010 <- ifelse(ret_data$COURSE_SUBJECT == "MATH" &
                               ret_data$COURSE_NUMB == "1010", 1, 0)
 
+# highest math and engl class
+ret_data$COURSE_NUMB <- as.numeric(ret_data$COURSE_NUMB)
+engl <- ret_data %>% 
+  group_by(PIDM) %>% 
+  filter(COURSE_SUBJECT == "ENGL") %>% 
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(engl = max(COURSE_NUMB)) %>% 
+  ungroup() 
+
+ret_data <- ret_data %>% left_join(engl, by = "PIDM")
+ret_data$engl <- as.character(ret_data$engl)
+ret_data$engl[is.na(ret_data$engl) == TRUE] <- "NA"
+
+math <- ret_data %>%
+  group_by(PIDM) %>%
+  filter(COURSE_SUBJECT == "MATH") %>%
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(math = max(COURSE_NUMB)) %>%
+  ungroup()
+
+ret_data <- ret_data %>% left_join(math, by = "PIDM")
+ret_data$math <- as.character(ret_data$math)
+ret_data$math[is.na(ret_data$math) == TRUE] <- "NA"
+
 # 5 digit zip
 ret_data$zip <- substr(ret_data$CURRENT_MAILING_ZIP, 1, 5)
 
@@ -267,20 +294,80 @@ ret_data$PROMISE_OFFERED[is.na(ret_data$PROMISE_OFFERED) == T] <- 0
 ret_data$promise_p <- ifelse(ret_data$PROMISE_PAID > 0, 1, 0) # 727 total observations:  ret_data %>% group_by(PIDM) %>% filter(promise_p == 1) %>% distinct(PIDM) %>% View
 ret_data$promise_o <- ifelse(ret_data$PROMISE_OFFERED > 0, 1, 0) # 1094 total observations: ret_data %>% group_by(PIDM) %>% filter(promise_o == 1) %>% distinct(PIDM) %>% View
 
+# retnetion flag 201740 & 201720
+ret_data$ret1720 <- ifelse(ret_data$TERM_CODE == 201720, 1, 0)
+ret_data$ret1740 <- ifelse(ret_data$TERM_CODE == 201740, 1, 0)
+
+# career fed/private loan
+fed <- ret_data %>%
+  group_by(PIDM) %>%
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(fed_career = sum(FED_LOAN)) %>%
+  ungroup
+
+ret_data <- ret_data %>% left_join(fed, by = "PIDM")
+
+pri <- ret_data %>%
+  group_by(PIDM) %>%
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(pri_career = sum(PRIVATE_LOAN)) %>%
+  ungroup
+
+ret_data <- ret_data %>% left_join(pri, by = "PIDM")
+
+# career fails/withdrawn
+
+fails <- ret_data %>%
+  group_by(PIDM, TERM_CODE) %>%
+  summarise(fails_term = max(CREDITS_FAILED))
+
+fails_career <- fails %>%
+  group_by(PIDM) %>%
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(fails_career = sum(fails_term))
+
+ret_data <- ret_data %>% left_join(fails_career, by = "PIDM")
+ret_data$fails_career[is.na(ret_data$fails_career) == T] <- 0
+
+withs <- ret_data %>%
+  group_by(PIDM, TERM_CODE) %>%
+  summarise(with_term = max(CREDITS_WITHDRAWN))
+
+withs_career <- withs %>%
+  group_by(PIDM) %>%
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(withs_career = sum(with_term))
+
+ret_data <- ret_data %>% left_join(withs_career, by = "PIDM")
+ret_data$withs_career[is.na(ret_data$withs_career) == T] <- 0
+
+```
+
+
+```{r, echo=FALSE}
 # student/term level data to calculate. These will be joined to a student/terms data frame later
 student_term_calc <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
   dplyr::summarise(max_time = max(COURSE_BEGIN_TIME), 
             min_time = min(COURSE_BEGIN_TIME), 
             avg_cls_sz = mean(TOTAL_ENROLLMENT),
-            crds_fails = sum(CREDITS_FAILED),
-            crds_with = sum(CREDITS_WITHDRAWN),
-            engl1010 = sum(ENGL1010),
-            math1010 = sum(MATH1010),
-            instrction_type = mean(instrc_type_dum)) # different amounts than student_term
+            crds_fails = max(CREDITS_FAILED),
+            crds_with = max(CREDITS_WITHDRAWN)) # different amounts than student_term
 
-# number of _____ student/term. to be joined to a student/term df later
+# # number of _____ student/term. to be joined to a student/term df later # switching to career sum for matching 
+# but check the term for validating matches. 
 cte_courses <- ret_data %>% filter(CTE_CODE == "V") %>% group_by(PIDM, TERM_CODE) %>% tally()
 rem_courses <- ret_data %>% filter(REMEDIAL_CODE == "R") %>% group_by(PIDM, TERM_CODE) %>% tally()
+
+cte_career <- ret_data %>% 
+  filter(CTE_CODE == "V") %>% 
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>% 
+  group_by(PIDM) %>% 
+  tally()
+
+rem_career <- ret_data %>% filter(REMEDIAL_CODE == "R") %>% 
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  group_by(PIDM) %>% 
+  tally()
 
 # student level data to pull out. not necessary all avalible at student/term level
 # ent_cohort <- ret_data %>% group_by(PIDM) %>% distinct(PIDM, COHORT_MIN_TERM, HIGH_SCHOOL_CODE, CURRENT_MAILING_ZIP)
@@ -292,15 +379,27 @@ student_term <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
            CUM_GPA_OVERALL, CUM_EARNED_OVERALL, S_ENTRY_ACTION, 
            first_gen, TERM_GPA, promise_p, 
            promise_o, COHORT_MIN_TERM, HIGH_SCHOOL_CODE,
-           male, eth,
+           male, eth, fed_career, pri_career,
            zip, first_sem, PELL_ELIG,
-           LAST_TERM, term_age) # different amounts than student_term_calc
+           LAST_TERM, term_age, engl, math, inst,
+           ret1720, ret1740, fails_career, withs_career)
 
 # joining into a student/term dataframe
 test_join <- left_join(student_term, student_term_calc, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
 test_join <- test_join %>% left_join(cte_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
 full_data <- test_join %>% left_join(rem_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
-colnames(full_data)[33:34] <- c("cte_courses", "rem_courses")
+colnames(full_data)[39:40] <- c("cte_courses", "rem_courses")
+full_data <- full_data %>% left_join(cte_career, by = "PIDM")
+full_data <- full_data %>% left_join(rem_career, by = "PIDM")
+colnames(full_data)[41:42] <- c("cte_career", "rem_career")
+
+# fixing NAs
+full_data$cte_courses[is.na(full_data$cte_courses) == T] <- 0
+full_data$rem_courses[is.na(full_data$rem_courses) == T] <- 0
+full_data$cte_career[is.na(full_data$cte_career) == T] <- 0
+full_data$rem_career[is.na(full_data$rem_career) == T] <- 0
+full_data$crds_fails[is.na(full_data$crds_fails) == T] <- 0
+full_data$crds_with[is.na(full_data$crds_with) == T] <- 0
 
 # remove students who recived and award after 201030
 # anti_join by PIDM and AWARD_TERM = TERM_CODE
@@ -309,7 +408,9 @@ awards <- cbind(awards, 1)
 colnames(awards)[3] <- "award_flag"
 # not perfect but it should work. several students have multiple awards.
 full_data_awards <- full_data %>% left_join(awards, by = c("PIDM" = "PIDM", "TERM_CODE" = "AWARD_TERM"))
-rm(awards, cte_courses, rem_courses, ret_flag_data, ret_sums,  ret_data, student_term, student_term_calc, test_join)
+rm(awards, cte_courses, rem_courses, cte_career, rem_career, 
+   ret_data, student_term, student_term_calc, test_join, engl, math,
+   fed, inst, pri, withs, withs_career, fails, fails_career)
 ```
 
 ```{r, echo=FALSE, eval=FALSE}
@@ -325,7 +426,10 @@ elig_2016_set <- full_data_awards %>%
   filter(PELL_ELIG == 1) %>%
   select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
          crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
-         CUM_GPA_OVERALL, CUM_EARNED_OVERALL, FAFSA, PELL_ELIG) 
+         CUM_GPA_OVERALL, CUM_EARNED_OVERALL, PELL_ELIG,
+         math, engl, inst, fed_career, pri_career, cte_career, 
+         rem_career, fails_career, withs_career, ret1720, ret1740,
+         avg_cls_sz, zip) 
 
 # variables prior to 201640 to match on
 pre_201620 <- full_data_awards %>%
@@ -359,35 +463,12 @@ colnames(pre_201540) <- c("TERM_201540", "PIDM", "TERM_GPA_201540",  "CREDITS_AT
 # joining pre 201640 matching covariates
 pre_201640 <- full_join(pre_201540, pre_201620,  by = "PIDM")
 
-# joing 201640 and pre-201640 data together.
 ps_data <- elig_2016_set %>% inner_join(pre_201640, by = "PIDM")
-
-# ps_data %>% filter(is.na(TERM_201540) == T & is.na(TERM_GPA_201620)== T) %>% View() # =0!
-# ps_data %>% filter(is.na(CUM_GPA_OVERALL) == T) %>% View() # students who haven't earned a grade
-# removing them. CUM_GPA is a big thing to match on. None of the 107 are promise. 
 
 ps_data <- ps_data %>% filter(is.na(CUM_GPA_OVERALL) == F)
 
 ```
 
-```{r, echo=FALSE}
-# maybe the NAs make this problem
-# dealing with NAs in the data prior to matching
-# appropriate to turn into 0
-# ps_data$crds_fails
-# ps_data$crds_with
-# ps_data$CREDITS_ATT_201540
-# ps_data$FED_LOAN_201540
-# ps_data$PRIVATE_LOAN_201540
-# ps_data$first_sem_201540
-# 
-# # columns to be removed/ignored
-# ps_data$TERM_201540
-# ps_data$TERM_201620
-# 
-# # how to handle NAs for
-# ps_data$instrction_type_201540
-```
 
 ```{r, echo=FALSE, eval=FALSE}
 # two seperate matches
@@ -579,7 +660,9 @@ ps_caret_gbm %>%
 # Jessie's idea
 
 
-Generate propensity scores for all exact match on minimum cohort year.
+Generate propensity scores for all exact match on minimum cohort year. match on zip.
+- how to flag students who have tested out of Math courses? 
+- hos to flag students who haven't taken either math or engl?
 
 ```{r, echo=FALSE}
 # select students enrolled in 201640 who did not graduate in 201640
@@ -593,8 +676,50 @@ pidm_201640 <- full_data_awards %>%
 elig_2016_set <- full_data_awards %>% 
   dplyr::semi_join(pidm_201640, by = "PIDM") # student/term 
 
-fixed_2016 <- elig_2016_set %>% filter(TERM_CODE == 201640) %>% select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
-         crds_fails, crds_with, COHORT_MIN_TERM, promise_p, CUM_GPA_OVERALL, CUM_EARNED_OVERALL)
+fixed_2016 <- elig_2016_set %>% dplyr::filter(TERM_CODE == 201640) %>% 
+  dplyr::select(PIDM, 
+                TERM_CODE, 
+                term_age, 
+                first_gen, 
+                eth, 
+                male, 
+                crds_fails, 
+                crds_with, 
+                COHORT_MIN_TERM, 
+                promise_p, 
+                CUM_GPA_OVERALL, 
+                CUM_EARNED_OVERALL, 
+                zip, 
+                S_ENTRY_ACTION, 
+                max_time, 
+                min_time,
+                max_math,
+                max_engl,
+                rem_courses, 
+                cte_courses, 
+                HIGH_SCHOOL_CODE)
+
+#
+
+# join based on fixed_2016 PIDM
+vari_2016 <- elig_2016_set %>%
+  filter(TERM_CODE != 201640 | TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201740) %>% 
+  group_by(PIDM) %>%
+  summarise(avg_cls_sz_car = mean(avg_cls_sz), 
+            instrction_type_car = mean(instrction_type), 
+            tot_fed = sum(FED_LOAN), 
+            tot_pri = sum(PRIVATE_LOAN), 
+            crds_fails_car = sum(crds_fails),
+            crds_with_car = sum(crds_with))
+
+max_time = max(COURSE_BEGIN_TIME), 
+            min_time = min(COURSE_BEGIN_TIME), 
+            avg_cls_sz = mean(TOTAL_ENROLLMENT),
+            crds_fails = sum(CREDITS_FAILED),
+            crds_with = sum(CREDITS_WITHDRAWN),
+            engl1010 = sum(ENGL1010),
+            math1010 = sum(MATH1010),
+            instrction_type = mean(instrc_type_dum)
 
 # elig_2016_set %>% group_by(COHORT_MIN_TERM) %>% tally() %>% View
 # elig_2016_set %>% group_by(COHORT_MIN_TERM) %>% filter(promise_p == 1) %>% tally() %>% View
@@ -617,6 +742,23 @@ fixed_cov <- full_data_awards %>%
 
 ps_set <- 
 ```
+
+# check
+
+- credits failed, still check the new fails_careers
+- credits with
+-  blah <- full_data_awards %>% filter(PELL_ELIG == 1 & FAFSA == 0) not good
+
+# make
+
+- highest math course number. done
+- highest engl course number. done
+- fed loan career
+- private loan career
+
+# consideration
+
+- run first semesters seperately 
 
 ```{r, echo=FALSE}
 library(caret)
