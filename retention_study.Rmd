@@ -119,6 +119,7 @@ STUDENT_LIST.FIRST_GEN,
 STUDENT_LIST.LAST_TERM,
 STUDENT_LIST.CURRENT_MAILING_ZIP,
 STUDENT_LIST.HIGH_SCHOOL_CODE,
+*** STUDENT_LIST.FORMER_CONCURRENT, ***
 STUDENT_TERMS.PIDM, 
 STUDENT_TERMS.ENROLL_TERM, 
 STUDENT_TERMS.TERM_GPA,
@@ -341,6 +342,14 @@ withs_career <- withs %>%
 ret_data <- ret_data %>% left_join(withs_career, by = "PIDM")
 ret_data$withs_career[is.na(ret_data$withs_career) == T] <- 0
 
+# mean credits attempted per term
+mean_crd_att <- ret_data %>%
+  group_by(PIDM) %>%
+  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  summarise(mean_crd_att = mean(CREDITS_ATT))
+
+ret_data <- ret_data %>% left_join(mean_crd_att, by = "PIDM")
+
 ```
 
 
@@ -382,16 +391,16 @@ student_term <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
            male, eth, fed_career, pri_career,
            zip, first_sem, PELL_ELIG,
            LAST_TERM, term_age, engl, math, inst,
-           ret1720, ret1740, fails_career, withs_career)
+           ret1720, ret1740, fails_career, withs_career, mean_crd_att)
 
 # joining into a student/term dataframe
 test_join <- left_join(student_term, student_term_calc, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
 test_join <- test_join %>% left_join(cte_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
 full_data <- test_join %>% left_join(rem_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
-colnames(full_data)[39:40] <- c("cte_courses", "rem_courses")
+colnames(full_data)[40:41] <- c("cte_courses", "rem_courses")
 full_data <- full_data %>% left_join(cte_career, by = "PIDM")
 full_data <- full_data %>% left_join(rem_career, by = "PIDM")
-colnames(full_data)[41:42] <- c("cte_career", "rem_career")
+colnames(full_data)[42:43] <- c("cte_career", "rem_career")
 
 # fixing NAs
 full_data$cte_courses[is.na(full_data$cte_courses) == T] <- 0
@@ -417,46 +426,61 @@ rm(awards, cte_courses, rem_courses, cte_career, rem_career,
 # subseting the data for the PS promise model
 
 # the eligible set of students to evaluated causality on: continuing students in 201640 who didn't graduate and had never recieved an award. 
-# the 201640 variables to match on (not impacted by treatment):
-elig_2016_set <- full_data_awards %>% 
+# the 201640 variables to match on (not impacted by treatment): S_entry_action is problematic (9 different types)
+elig_2016_set_cs <- full_data_awards %>% 
   filter(TERM_CODE < 201700) %>% 
   filter(is.na(award_flag) == T) %>%
   filter(TERM_CODE == 201640) %>%
-  filter(S_ENTRY_ACTION == "CS") %>%
+  filter(first_sem == 0) %>%
   filter(PELL_ELIG == 1) %>%
   select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
          crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
          CUM_GPA_OVERALL, CUM_EARNED_OVERALL, PELL_ELIG,
          math, engl, inst, fed_career, pri_career, cte_career, 
          rem_career, fails_career, withs_career, ret1720, ret1740,
-         avg_cls_sz, zip) 
+         avg_cls_sz, zip, mean_crd_att, first_sem) 
 
-# variables prior to 201640 to match on
-pre_201620 <- full_data_awards %>%
-  filter(TERM_CODE == 201620) %>%
+elig_2016_set_ff <- full_data_awards %>% 
+  filter(TERM_CODE < 201700) %>% 
   filter(is.na(award_flag) == T) %>%
-  select(PIDM, TERM_GPA, CREDITS_ATT, 
-         FED_LOAN, PRIVATE_LOAN, first_sem, 
-         instrction_type, cte_courses, rem_courses,
-         engl1010, math1010, avg_cls_sz)
+  filter(TERM_CODE == 201640) %>%
+  filter(first_sem == 1) %>%
+  filter(PELL_ELIG == 1) %>%
+  select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
+         crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
+         CUM_GPA_OVERALL, CUM_EARNED_OVERALL, PELL_ELIG,
+         math, engl, inst, fed_career, pri_career, cte_career, 
+         rem_career, fails_career, withs_career, ret1720, ret1740,
+         avg_cls_sz, zip, mean_crd_att, first_sem) 
 
-colnames(pre_201620) <- c("TERM_201620", "PIDM", "TERM_GPA_201620",  "CREDITS_ATT_201620", 
-         "FED_LOAN_201620", "PRIVATE_LOAN_201620", "first_sem_201620", 
-         "instrction_type_201620", "cte_courses_201620", "rem_courses_201620",
-         "engl1010_201620", "math1010_201620", "avg_cls_sz_201620")
+# 5975 total students in both sets. 3933 non-first sem 2042 for first sem
 
-pre_201540 <- full_data_awards %>%
-  filter(TERM_CODE == 201540) %>%
-  filter(is.na(award_flag) == T) %>%
-  select(PIDM, TERM_GPA, CREDITS_ATT, 
-         FED_LOAN, PRIVATE_LOAN, first_sem, 
-         instrction_type, cte_courses, rem_courses,
-         engl1010, math1010, avg_cls_sz)
+# # variables prior to 201640 to match on
+# pre_201620 <- full_data_awards %>%
+#   filter(TERM_CODE == 201620) %>%
+#   filter(is.na(award_flag) == T) %>%
+#   select(PIDM, TERM_GPA, CREDITS_ATT, 
+#          FED_LOAN, PRIVATE_LOAN, first_sem, 
+#          instrction_type, cte_courses, rem_courses,
+#          engl1010, math1010, avg_cls_sz)
 
-colnames(pre_201540) <- c("TERM_201540", "PIDM", "TERM_GPA_201540",  "CREDITS_ATT_201540", 
-         "FED_LOAN_201540", "PRIVATE_LOAN_201540", "first_sem_201540", 
-         "instrction_type_201540", "cte_courses_201540", "rem_courses_201540",
-         "engl1010_201540", "math1010_201540", "avg_cls_sz_201540")
+# colnames(pre_201620) <- c("TERM_201620", "PIDM", "TERM_GPA_201620",  "CREDITS_ATT_201620", 
+#          "FED_LOAN_201620", "PRIVATE_LOAN_201620", "first_sem_201620", 
+#          "instrction_type_201620", "cte_courses_201620", "rem_courses_201620",
+#          "engl1010_201620", "math1010_201620", "avg_cls_sz_201620")
+# 
+# pre_201540 <- full_data_awards %>%
+#   filter(TERM_CODE == 201540) %>%
+#   filter(is.na(award_flag) == T) %>%
+#   select(PIDM, TERM_GPA, CREDITS_ATT, 
+#          FED_LOAN, PRIVATE_LOAN, first_sem, 
+#          instrction_type, cte_courses, rem_courses,
+#          engl1010, math1010, avg_cls_sz)
+# 
+# colnames(pre_201540) <- c("TERM_201540", "PIDM", "TERM_GPA_201540",  "CREDITS_ATT_201540", 
+#          "FED_LOAN_201540", "PRIVATE_LOAN_201540", "first_sem_201540", 
+#          "instrction_type_201540", "cte_courses_201540", "rem_courses_201540",
+#          "engl1010_201540", "math1010_201540", "avg_cls_sz_201540")
 ```
 
 ```{r, echo = FALSE, eval=FALSE}
@@ -470,6 +494,7 @@ ps_data <- ps_data %>% filter(is.na(CUM_GPA_OVERALL) == F)
 ```
 
 
+Check this chunk
 ```{r, echo=FALSE, eval=FALSE}
 # two seperate matches
 # 201620 
@@ -749,12 +774,14 @@ ps_set <-
 - credits with
 -  blah <- full_data_awards %>% filter(PELL_ELIG == 1 & FAFSA == 0) not good
 
+
 # make
 
 - highest math course number. done
 - highest engl course number. done
-- fed loan career
-- private loan career
+- fed loan career. done
+- private loan career. done
+- former concurrent from student_list when you get back. 
 
 # consideration
 
