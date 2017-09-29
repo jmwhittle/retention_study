@@ -8,8 +8,10 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-## project info
+# project info
 started 8/24/2017
+analysis finished 9/29/2017 - with a two weeks out of the office during this time. 
+additional write up to promise report 10/2/2017
 
 ## Objective
 
@@ -62,7 +64,7 @@ Accurately model f-s and f-f retention at SLCC with a propensity score model tha
 \item characteristics of each cluster. zips, highschools, pell info, demos
 \end{itemize}
 
-# Uses for the retention model
+## Uses for the retention model
 
 \begin{itemize}
 \item targeting students for retention programs.
@@ -122,10 +124,8 @@ STUDENT_LIST.FIRST_GEN,
 STUDENT_LIST.LAST_TERM,
 STUDENT_LIST.CURRENT_MAILING_ZIP,
 STUDENT_LIST.HIGH_SCHOOL_CODE,
-*** STUDENT_LIST.FORMER_CONCURRENT, ***
 STUDENT_TERMS.PIDM, 
 STUDENT_TERMS.ENROLL_TERM, 
-de
 STUDENT_TERMS.CUM_GPA_OVERALL, 
 STUDENT_TERMS.CREDITS_WITHDRAWN, 
 STUDENT_TERMS.CREDITS_ATT,
@@ -589,29 +589,31 @@ ff_nogpa_2016_gbm_sum
 
 
 # modeling promise inclusion first.
-As per Webb. Model retention first based on 
+As per Webb. Model retention first based. done. will have to do retention model on my own time. 
 
-# Jessie's idea
-Generate propensity scores for all exact match on minimum cohort year. match on zip.
-- how to flag students who have tested out of Math courses? 
-- hos to flag students who haven't taken either math or engl?
+## Jessie's idea
+Generate propensity scores for all exact match on minimum cohort year. match on zip. done/interpreted. done/not interpreted seemed similar.
+- how to flag students who have tested out of Math courses? not done. these student's will count as NA for the math/engl factor.
+- hos to flag students who haven't taken either math or engl? done. Used highest math/engl course as factors in the gbm
 
-# check
+## check
 - credits failed, still check the new fails_careers
 - credits with
 -  blah <- full_data_awards %>% filter(PELL_ELIG == 1 & FAFSA == 0) not good
 
 
-# make
+## make
 - highest math course number. done
 - highest engl course number. done
 - fed loan career. done
 - private loan career. done
-- former concurrent from student_list when you get back. 
+- former concurrent from student_list when you get back. doneish. used three groups instead. CS, FF with gpa (former concurrent/transfer), FF without GPA. 
 
-# consideration
-- run first semesters seperately 
-
+## consideration
+- run first semesters seperately. done ran three seperate analyses. continuing studnets with gpa, first-time students with gpa and first time students without gpa. 
+- first time students with gpa might be mostly former concurrent.
+- not all CS had gpa. like 44, they were dropped. 
+# results
 ## matching CS_GPA ret1720
 ```{r, echo=FALSE}
 # matching
@@ -627,7 +629,7 @@ match_cs_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by,
                         caliper = .25)
 
 summary(match_cs_gpa)
-
+rm(Y, Tr, X, by)
 # MatchBalance
 mb_match_cs_gpa <- MatchBalance(ps_cs_gpa$promise_p ~ 
                                   ps_cs_gpa$term_age + ps_cs_gpa$male + ps_cs_gpa$first_gen + ps_cs_gpa$eth +
@@ -707,7 +709,7 @@ ggplot() + geom_histogram(aes(ps_cs_gpa$ret1720[match_cs_gpa$index.treated]), co
   xlab("red = treated retention")
 ```
 
-## matching CS_GPA term_gpa_201720
+## matching CS_GPA term_gpa_201720*
 ```{r, echo=FALSE}
 # term_gpa_201720 outcome variable
 # cs_gpa_2016 matching using ps_cs_gpa
@@ -721,7 +723,7 @@ match_cs_gpa_term <- Matchby(Y = Y_gpa, Tr = Tr, X = X, by = by,
                         caliper = .25)
 
 summary(match_cs_gpa_term)
-
+rm(Y_gpa, Tr, X, by)
 # MatchBalance
 mb_match_cs_gpa_term <- MatchBalance(ps_cs_gpa$promise_p ~ 
                                   ps_cs_gpa$term_age + ps_cs_gpa$male + ps_cs_gpa$first_gen + ps_cs_gpa$eth +
@@ -733,9 +735,9 @@ mb_match_cs_gpa_term <- MatchBalance(ps_cs_gpa$promise_p ~
                                 match.out = match_cs_gpa, ks = T, nboots = 500)
 
 ```
-No significant impact on grades.
+Seems to be a small positive impact on grades. I think this isn't causal but correlation. Strength of schedule wasn't controlled for etc.
 
-## matching FF_GPA ret1720
+## matching FF_GPA ret1720*
 ```{r, echo=FALSE}
 Y <- ps_ff_gpa$ret1720
 Tr <- ps_ff_gpa$promise_p
@@ -746,7 +748,7 @@ match_ff_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by,
                         caliper = .25)
 
 summary(match_ff_gpa)
-
+rm(Y, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
 mb_match_ff_gpa <- MatchBalance(ps_ff_gpa$promise_p ~ 
                                   ps_ff_gpa$term_age + ps_ff_gpa$male + 
@@ -758,7 +760,8 @@ mb_match_ff_gpa <- MatchBalance(ps_ff_gpa$promise_p ~
 
 
 ```
-No significant impact on retention for Spring 2017.
+No significant impact on retention for Spring 2017. Now seems to have an effect on retention????
+- Check that the ps scores aren't moving around.
 
 #### ff_gpa match plots
 ```{r, echo=FALSE}
@@ -840,7 +843,7 @@ match_ff_gpa_term <- Matchby(Y = Y_gpa, Tr = Tr, X = X, by = by,
                         caliper = .25)
 
 summary(match_ff_gpa_term)
-
+rm(Y_gpa, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
 mb_match_ff_gpa_term <- MatchBalance(ps_ff_gpa$promise_p ~ 
                                   ps_ff_gpa$term_age + ps_ff_gpa$male + 
@@ -865,7 +868,7 @@ match_ff_nogpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by,
                         caliper = .25)
 
 summary(match_ff_nogpa)
-
+rm(Y, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
 ```
 No significant impact on retention for Spring 2017.
@@ -905,7 +908,7 @@ match_ff_nogpa_term <- Matchby(Y = Y_term, Tr = Tr, X = X, by = by,
                         caliper = .25)
 
 summary(match_ff_nogpa_term)
-
+rm(Y_gpa, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
 ```
 No significant impact on grades.
@@ -1237,3 +1240,15 @@ match_ff_nogpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by,
 
 summary(match_ff_nogpa)
 ```
+```{r, eval=FALSE, echo=FALSE}
+# data pull for transfer data from clearning house.
+transfers <-  full_data_awards %>%
+  filter(is.na(award_flag) == T) %>%
+  filter(TERM_CODE == 201640) %>%
+  filter(PELL_ELIG == 1) %>%
+  dplyr::select(PIDM)
+
+TRANSFERS <- transfers %>% left_join(ret_data) %>% dplyr::distinct(PIDM, FIRST_NAME, MIDDLE_NAME, LAST_NAME, BIRTH_DATE)
+write_csv(TRANSFERS, "promise_20170920.csv")
+```
+
