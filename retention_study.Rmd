@@ -70,6 +70,8 @@ Accurately model f-s and f-f retention at SLCC with a propensity score model tha
 \item understand what factor predict retention
 \end{itemize}
 
+## SQL used to pull data from enroll tables.
+- Oracle's SQL Developer 2 was used. not Pepe the Alt-right Toad.
 ```{sql, eval = FALSE, echo=T}
 -- SQL code to pull data from enroll
 
@@ -89,7 +91,8 @@ IN (201040, 201120,
 201340, 201420,
 201440, 201520,
 201540, 201620,
-201640, 201720);
+201640, 201720,
+201740);
 
 -- add former concurrent enrollment
 -- credits failed seems fishy PIDM 411155
@@ -122,7 +125,7 @@ STUDENT_LIST.HIGH_SCHOOL_CODE,
 *** STUDENT_LIST.FORMER_CONCURRENT, ***
 STUDENT_TERMS.PIDM, 
 STUDENT_TERMS.ENROLL_TERM, 
-STUDENT_TERMS.TERM_GPA,
+de
 STUDENT_TERMS.CUM_GPA_OVERALL, 
 STUDENT_TERMS.CREDITS_WITHDRAWN, 
 STUDENT_TERMS.CREDITS_ATT,
@@ -152,18 +155,20 @@ AND STUDENT_COURSE_ENROLLMENTS.TERM_CODE IN
 201340, 201420,
 201440, 201520,
 201540, 201620,
-201640, 201720)
+201640, 201720,
+201740)
 ORDER BY STUDENT_COURSE_ENROLLMENTS.TERM_CODE;
 ```
 
+## loading basic data manipulation package libraries
 ```{r, include=FALSE, echo=FALSE}
-library(tidyverse); theme_set(theme_minimal())
 library(lubridate)
-library(caret)
-library(ranger)
-library(gbm)
+library(tidyverse); theme_set(theme_minimal())
 ```
 
+## importing base data from sql pull above. 
+- student/term/course level
+- aggregation and transformation will be done in R. 
 ```{r, echo=T, include=FALSE}
 ret_data <- read_csv("retention_study.csv")
 ```
@@ -185,6 +190,7 @@ ret_data <- read_csv("retention_study.csv")
 
 Data should end up at student/term level. Data is starting out at student/course/term level. 
 
+## importing raw term entry action data.
 ```{r, echo=FALSE}
 retention_flag_raw <- read_csv("retenion_flag_raw.csv") # yes, it is spelled wrong
 
@@ -204,6 +210,7 @@ ret_flag_data$ENROLL_TERM <- as.integer(ret_flag_data$ENROLL_TERM)
 rm(retention_flag_raw)
 ```
 
+## joining retention/term entry action data to ret_data.
 ```{r, echo=FALSE}
 ret_data <- ret_data[, !names(ret_data) %in% c("CRN_1", "TERM_CODE_1", "TERM_CODE_2", "PIDM_1", "PIDM_2", "ENROLL_TERM")]
 ret_data <- ret_data %>% 
@@ -211,6 +218,7 @@ ret_data <- ret_data %>%
 rm(ret_flag_data)
 ```
 
+## importing term start date data
 ```{r, echo=FALSE}
 stvterm <- read_csv("stvterm.csv")
 ret_data <- ret_data %>% left_join(stvterm, by = c("TERM_CODE" = "STVTERM_CODE"))
@@ -222,6 +230,7 @@ ret_data$term_age <- as.numeric((ret_data$start_date - ret_data$birth_date)/365)
 rm(stvterm)
 ```
 
+## creating/transforming variables into aggregates
 ```{r, echo=FALSE}
 # instrcution type simplification
 ret_data$inst_type <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" | 
@@ -234,10 +243,9 @@ ret_data$instrc_type_dum <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" |
 
 # adding full career instrcution type value
 inst <- ret_data %>% 
-  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  group_by(PIDM) %>%
-  summarise(inst = mean(instrc_type_dum)) %>%
-  ungroup()
+  dplyr::filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  dplyr::group_by(PIDM) %>%
+  dplyr::summarise(inst = mean(instrc_type_dum)) 
 
 ret_data <- ret_data %>% left_join(inst, by = "PIDM")
 
@@ -262,10 +270,10 @@ ret_data$MATH1010 <- ifelse(ret_data$COURSE_SUBJECT == "MATH" &
 # highest math and engl class
 ret_data$COURSE_NUMB <- as.numeric(ret_data$COURSE_NUMB)
 engl <- ret_data %>% 
-  group_by(PIDM) %>% 
-  filter(COURSE_SUBJECT == "ENGL") %>% 
-  filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(engl = max(COURSE_NUMB)) %>% 
+  dplyr::group_by(PIDM) %>% 
+  dplyr::filter(COURSE_SUBJECT == "ENGL") %>% 
+  dplyr::filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
+  dplyr::summarise(engl = max(COURSE_NUMB)) %>% 
   ungroup() 
 
 ret_data <- ret_data %>% left_join(engl, by = "PIDM")
@@ -273,10 +281,10 @@ ret_data$engl <- as.character(ret_data$engl)
 ret_data$engl[is.na(ret_data$engl) == TRUE] <- "NA"
 
 math <- ret_data %>%
-  group_by(PIDM) %>%
+  dplyr::group_by(PIDM) %>%
   filter(COURSE_SUBJECT == "MATH") %>%
   filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(math = max(COURSE_NUMB)) %>%
+  dplyr::summarise(math = max(COURSE_NUMB)) %>%
   ungroup()
 
 ret_data <- ret_data %>% left_join(math, by = "PIDM")
@@ -296,14 +304,19 @@ ret_data$promise_p <- ifelse(ret_data$PROMISE_PAID > 0, 1, 0) # 727 total observ
 ret_data$promise_o <- ifelse(ret_data$PROMISE_OFFERED > 0, 1, 0) # 1094 total observations: ret_data %>% group_by(PIDM) %>% filter(promise_o == 1) %>% distinct(PIDM) %>% View
 
 # retnetion flag 201740 & 201720
+# doesn't work
 ret_data$ret1720 <- ifelse(ret_data$TERM_CODE == 201720, 1, 0)
 ret_data$ret1740 <- ifelse(ret_data$TERM_CODE == 201740, 1, 0)
+
+ret1720 <- ret_data %>% group_by(PIDM) %>% dplyr::summarise(ret1720 = max(ret1720))
+ret1740 <- ret_data %>% group_by(PIDM) %>% dplyr::summarise(ret1740 = max(ret1740))
+
 
 # career fed/private loan
 fed <- ret_data %>%
   group_by(PIDM) %>%
   filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(fed_career = sum(FED_LOAN)) %>%
+  dplyr::summarise(fed_career = sum(FED_LOAN)) %>%
   ungroup
 
 ret_data <- ret_data %>% left_join(fed, by = "PIDM")
@@ -311,7 +324,7 @@ ret_data <- ret_data %>% left_join(fed, by = "PIDM")
 pri <- ret_data %>%
   group_by(PIDM) %>%
   filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(pri_career = sum(PRIVATE_LOAN)) %>%
+  dplyr::summarise(pri_career = sum(PRIVATE_LOAN)) %>%
   ungroup
 
 ret_data <- ret_data %>% left_join(pri, by = "PIDM")
@@ -320,24 +333,24 @@ ret_data <- ret_data %>% left_join(pri, by = "PIDM")
 
 fails <- ret_data %>%
   group_by(PIDM, TERM_CODE) %>%
-  summarise(fails_term = max(CREDITS_FAILED))
+  dplyr::summarise(fails_term = max(CREDITS_FAILED))
 
 fails_career <- fails %>%
   group_by(PIDM) %>%
   filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(fails_career = sum(fails_term))
+  dplyr::summarise(fails_career = sum(fails_term))
 
 ret_data <- ret_data %>% left_join(fails_career, by = "PIDM")
 ret_data$fails_career[is.na(ret_data$fails_career) == T] <- 0
 
 withs <- ret_data %>%
   group_by(PIDM, TERM_CODE) %>%
-  summarise(with_term = max(CREDITS_WITHDRAWN))
+  dplyr::summarise(with_term = max(CREDITS_WITHDRAWN))
 
 withs_career <- withs %>%
   group_by(PIDM) %>%
   filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(withs_career = sum(with_term))
+  dplyr::summarise(withs_career = sum(with_term))
 
 ret_data <- ret_data %>% left_join(withs_career, by = "PIDM")
 ret_data$withs_career[is.na(ret_data$withs_career) == T] <- 0
@@ -346,13 +359,14 @@ ret_data$withs_career[is.na(ret_data$withs_career) == T] <- 0
 mean_crd_att <- ret_data %>%
   group_by(PIDM) %>%
   filter(TERM_CODE != 201720 | TERM_CODE != 201730 | TERM_CODE != 201640) %>%
-  summarise(mean_crd_att = mean(CREDITS_ATT))
+  dplyr::summarise(mean_crd_att = mean(CREDITS_ATT))
 
 ret_data <- ret_data %>% left_join(mean_crd_att, by = "PIDM")
 
 ```
+- This section looks good. ret1740 hasn't been added to banner yet but when it is, re-run the SQL and then they data will be ready for matching. 
 
-
+## joining variables to data
 ```{r, echo=FALSE}
 # student/term level data to calculate. These will be joined to a student/terms data frame later
 student_term_calc <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
@@ -378,6 +392,10 @@ rem_career <- ret_data %>% filter(REMEDIAL_CODE == "R") %>%
   group_by(PIDM) %>% 
   tally()
 
+term_gpa_201640 <- ret_data %>% filter(TERM_CODE == 201640) %>%
+  group_by(PIDM) %>%
+  dplyr::summarise(term_gpa_201640 = max(TERM_GPA))
+
 # student level data to pull out. not necessary all avalible at student/term level
 # ent_cohort <- ret_data %>% group_by(PIDM) %>% distinct(PIDM, COHORT_MIN_TERM, HIGH_SCHOOL_CODE, CURRENT_MAILING_ZIP)
 
@@ -390,17 +408,17 @@ student_term <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
            promise_o, COHORT_MIN_TERM, HIGH_SCHOOL_CODE,
            male, eth, fed_career, pri_career,
            zip, first_sem, PELL_ELIG,
-           LAST_TERM, term_age, engl, math, inst,
-           ret1720, ret1740, fails_career, withs_career, mean_crd_att)
+           LAST_TERM, term_age, engl, math, inst, fails_career, withs_career, mean_crd_att)
 
 # joining into a student/term dataframe
 test_join <- left_join(student_term, student_term_calc, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
 test_join <- test_join %>% left_join(cte_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
 full_data <- test_join %>% left_join(rem_courses, by = c("PIDM" = "PIDM", "TERM_CODE" = "TERM_CODE"))
-colnames(full_data)[40:41] <- c("cte_courses", "rem_courses")
+colnames(full_data)[38:39] <- c("cte_courses", "rem_courses")
 full_data <- full_data %>% left_join(cte_career, by = "PIDM")
 full_data <- full_data %>% left_join(rem_career, by = "PIDM")
-colnames(full_data)[42:43] <- c("cte_career", "rem_career")
+colnames(full_data)[40:41] <- c("cte_career", "rem_career")
+full_data <- full_data %>% left_join(term_gpa_201640, by = "PIDM")
 
 # fixing NAs
 full_data$cte_courses[is.na(full_data$cte_courses) == T] <- 0
@@ -417,137 +435,494 @@ awards <- cbind(awards, 1)
 colnames(awards)[3] <- "award_flag"
 # not perfect but it should work. several students have multiple awards.
 full_data_awards <- full_data %>% left_join(awards, by = c("PIDM" = "PIDM", "TERM_CODE" = "AWARD_TERM"))
+full_data_awards <- full_data_awards %>% left_join(ret1720, by = "PIDM")
+full_data_awards <- full_data_awards %>% left_join(ret1740, by = "PIDM")
 rm(awards, cte_courses, rem_courses, cte_career, rem_career, 
    ret_data, student_term, student_term_calc, test_join, engl, math,
-   fed, inst, pri, withs, withs_career, fails, fails_career)
+   fed, inst, pri, withs, withs_career, fails, fails_career, ret1720, ret1740)
 ```
+- Joins checkout, column naming was correct. 
 
-```{r, echo=FALSE, eval=FALSE}
-# subseting the data for the PS promise model
+## creating sub matching groups
+```{r, echo=FALSE}
 
-# the eligible set of students to evaluated causality on: continuing students in 201640 who didn't graduate and had never recieved an award. 
-# the 201640 variables to match on (not impacted by treatment): S_entry_action is problematic (9 different types)
-elig_2016_set_cs <- full_data_awards %>% 
-  filter(TERM_CODE < 201700) %>% 
+# grouping by students with and without a cum_gpa_overall. Most of the 440 ff w/gpa are probably former concurrent
+cs_gpa_2016 <-  full_data_awards %>%
   filter(is.na(award_flag) == T) %>%
   filter(TERM_CODE == 201640) %>%
-  filter(first_sem == 0) %>%
+  filter(is.na(CUM_GPA_OVERALL) == F & first_sem == 0) %>%
   filter(PELL_ELIG == 1) %>%
-  select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
-         crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
+  dplyr::select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
+         COHORT_MIN_TERM, promise_p, 
          CUM_GPA_OVERALL, CUM_EARNED_OVERALL, PELL_ELIG,
          math, engl, inst, fed_career, pri_career, cte_career, 
          rem_career, fails_career, withs_career, ret1720, ret1740,
-         avg_cls_sz, zip, mean_crd_att, first_sem) 
+         avg_cls_sz, zip, mean_crd_att, first_sem, term_gpa_201640) 
 
-elig_2016_set_ff <- full_data_awards %>% 
-  filter(TERM_CODE < 201700) %>% 
+ff_nogpa_2016 <- full_data_awards %>%
   filter(is.na(award_flag) == T) %>%
   filter(TERM_CODE == 201640) %>%
-  filter(first_sem == 1) %>%
+  filter(is.na(CUM_GPA_OVERALL) == T & first_sem == 1) %>%
   filter(PELL_ELIG == 1) %>%
-  select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
-         crds_fails, crds_with, COHORT_MIN_TERM, promise_p, 
+  dplyr::select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
+          COHORT_MIN_TERM, promise_p, 
          CUM_GPA_OVERALL, CUM_EARNED_OVERALL, PELL_ELIG,
          math, engl, inst, fed_career, pri_career, cte_career, 
          rem_career, fails_career, withs_career, ret1720, ret1740,
-         avg_cls_sz, zip, mean_crd_att, first_sem) 
+         avg_cls_sz, zip, mean_crd_att, first_sem, term_gpa_201640)
 
-# 5975 total students in both sets. 3933 non-first sem 2042 for first sem
+ff_gpa_2016 <- full_data_awards %>%
+  filter(is.na(award_flag) == T) %>%
+  filter(TERM_CODE == 201640) %>%
+  filter(is.na(CUM_GPA_OVERALL) == F & first_sem == 1) %>%
+  filter(PELL_ELIG == 1) %>%
+  dplyr::select(PIDM, TERM_CODE, term_age, first_gen, eth, male, 
+          COHORT_MIN_TERM, promise_p, 
+         CUM_GPA_OVERALL, CUM_EARNED_OVERALL, PELL_ELIG,
+         math, engl, inst, fed_career, pri_career, cte_career, 
+         rem_career, fails_career, withs_career, ret1720, ret1740,
+         avg_cls_sz, zip, mean_crd_att, first_sem, term_gpa_201640)
+```
+- Just filtering down full_data_awards. 
 
-# # variables prior to 201640 to match on
-# pre_201620 <- full_data_awards %>%
-#   filter(TERM_CODE == 201620) %>%
-#   filter(is.na(award_flag) == T) %>%
-#   select(PIDM, TERM_GPA, CREDITS_ATT, 
-#          FED_LOAN, PRIVATE_LOAN, first_sem, 
-#          instrction_type, cte_courses, rem_courses,
-#          engl1010, math1010, avg_cls_sz)
-
-# colnames(pre_201620) <- c("TERM_201620", "PIDM", "TERM_GPA_201620",  "CREDITS_ATT_201620", 
-#          "FED_LOAN_201620", "PRIVATE_LOAN_201620", "first_sem_201620", 
-#          "instrction_type_201620", "cte_courses_201620", "rem_courses_201620",
-#          "engl1010_201620", "math1010_201620", "avg_cls_sz_201620")
-# 
-# pre_201540 <- full_data_awards %>%
-#   filter(TERM_CODE == 201540) %>%
-#   filter(is.na(award_flag) == T) %>%
-#   select(PIDM, TERM_GPA, CREDITS_ATT, 
-#          FED_LOAN, PRIVATE_LOAN, first_sem, 
-#          instrction_type, cte_courses, rem_courses,
-#          engl1010, math1010, avg_cls_sz)
-# 
-# colnames(pre_201540) <- c("TERM_201540", "PIDM", "TERM_GPA_201540",  "CREDITS_ATT_201540", 
-#          "FED_LOAN_201540", "PRIVATE_LOAN_201540", "first_sem_201540", 
-#          "instrction_type_201540", "cte_courses_201540", "rem_courses_201540",
-#          "engl1010_201540", "math1010_201540", "avg_cls_sz_201540")
+-NA problem with ethnicity variable
+```{r, echo=FALSE}
+# fixing an NA problem with the sub-groups
+cs_gpa_2016$eth[is.na(cs_gpa_2016$eth)] <- "oth_eth"
+ff_gpa_2016$eth[is.na(ff_gpa_2016$eth)] <- "oth_eth"
+ff_nogpa_2016$eth[is.na(ff_nogpa_2016$eth)] <- "oth_eth"
 ```
 
-```{r, echo = FALSE, eval=FALSE}
-# joining pre 201640 matching covariates
-pre_201640 <- full_join(pre_201540, pre_201620,  by = "PIDM")
+# three groups
+Propensity scores will be estimated for three of four subgroups
+- continuing students in 201640 with a value for CUM_GPA_OVERALL: 3889 students cs_gpa_2016
+- first time full time students in 201640 with a value for CUM_GPA_OVERALL: 440 students ff_gpa_2016
+- first time full time students in 201640 without a value for CUM_GPA_OVERALL: 1602 students ff_nogpa_2016
 
-ps_data <- elig_2016_set %>% inner_join(pre_201640, by = "PIDM")
+### cs_gpa_2016
+These students will have the most robust matches since there is information on their academic ability/performance at SLCC or another higher ed institutions prior to 201640. It is also believed however, these students are likely retainers since they are entering at least their second semester of college. 
+- 17 raw propensity score variables. 
 
-ps_data <- ps_data %>% filter(is.na(CUM_GPA_OVERALL) == F)
+### ff_gpa_2016
+These students have a COHORT_MIN_TERM == 201640. Technically  these students are in their first semester at SLCC but have a CUM_GPA_OVERALL at the begining of 201640. This means they have some academic history (probably as concurrent enrollment) at SLCC or another institution of higher ed. The concurrent enrollment flag in banner seems to have problems with it currently (as per Abby 9/25).
+- 17 raw propensity score variables. same as cs_gpa_2016 since these students have records at the higher ed level. 
 
+### ff_nogpa_2016
+These students have a COHORT_MIN_TERM == 201640. Technically these students are in their first semester and they have no recorded CUM_GPA_OVERALL, so no gpa prior to 201640. 
+- 7 raw propensity score variables. eliminated anything relating to prior higher ed expereince. 
+- These students are essentially being matched on non-academic variables. fed_career and pri_career are left in since some of these students seem to have prior academic loans. They either were for education that would not count for SLCC or the student didn't bother to transfer credits. These are left in since there might be "non-FTFT" students in the FTFT student group, if this distinction is significant then leaving in these variables will allow for that impact to be represented somewhere.
+
+## cs_gpa ps
+```{r, echo=FALSE}
+library(caret)
+# using gbm since it is easy to use
+# gbm for cs_gpa_2016
+set.seed(42)
+cs_gpa_2016_gbm <- train(as.factor(promise_p) ~ ., 
+               data = cs_gpa_2016[,!(names(cs_gpa_2016) %in% c('PIDM', 'TERM_CODE', 'COHORT_MIN_TERM',
+                                                               'PELL_ELIG', 'ret1720', 'ret1740', 'zip', 'first_sem', 'term_gpa_201640'))], 
+               method = "gbm", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
+
+cs_gpa_pred <- predict(cs_gpa_2016_gbm, cs_gpa_2016, type = "prob")
+ps_cs_gpa_gbm <- cbind(cs_gpa_pred$`1`)
+ps_cs_gpa <- data.frame(cs_gpa_2016, ps_cs_gpa_gbm)
+
+ps_cs_gpa %>% ggplot() + 
+  geom_histogram(aes(ps_cs_gpa_gbm, col = as.factor(promise_p)))
+
+cs_gpa_2016_gbm_sum <- summary(cs_gpa_2016_gbm)
+cs_gpa_2016_gbm_sum
 ```
 
+## ff_gpa ps
+```{r, echo=FALSE}
+# gbm for ff_gpa
+set.seed(42)
+ff_gpa_2016_gbm <- train(as.factor(promise_p) ~ ., 
+               data = ff_gpa_2016[,!(names(ff_gpa_2016) %in% c('PIDM', 'TERM_CODE', 'COHORT_MIN_TERM',
+                                                               'PELL_ELIG', 'ret1720', 'ret1740', 'zip', 'first_sem',
+                                                               'term_gpa_201640'))], 
+               method = "gbm", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
 
-Check this chunk
-```{r, echo=FALSE, eval=FALSE}
-# two seperate matches
-# 201620 
-ps_data_201620 <- elig_2016_set %>% inner_join(pre_201620, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
-# dim(ps_data_201620) # 9671 by 26
-# NAs
-ps_data_201620$crds_fails[is.na(ps_data_201620$crds_fails) == T] <- 0
-ps_data_201620$crds_with[is.na(ps_data_201620$crds_with) == T] <- 0
-ps_data_201620$cte_courses_201620[is.na(ps_data_201620$cte_courses_201620) == T] <- 0
-ps_data_201620$rem_courses_201620[is.na(ps_data_201620$rem_courses_201620) == T] <- 0
-ps_data_201620$PELL_ELIG <- as.double(ps_data_201620$PELL_ELIG)
-ps_data_201620$PELL_ELIG[is.na(ps_data_201620$PELL_ELIG) == T] <- 0
-ps_data_201620$eth <- as.factor(ps_data_201620$eth)
-ps_data_201620$eth[is.na(ps_data_201620$eth) == T] <- "oth_eth"
-ps_data_201620$first_gen <- as.factor(ps_data_201620$first_gen)
+ff_gpa_pred <- predict(ff_gpa_2016_gbm, ff_gpa_2016, type = "prob")
+ps_ff_gpa_gbm <- cbind(ff_gpa_pred$`1`)
+ps_ff_gpa <- data.frame(ff_gpa_2016, ps_ff_gpa_gbm)
 
-# 201540
-ps_data_201540 <- elig_2016_set %>% inner_join(pre_201540, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
-# dim(ps_data_201540) # 8548 by 26
-#NAs
-ps_data_201540$crds_fails[is.na(ps_data_201540$crds_fails) == T] <- 0
-ps_data_201540$crds_with[is.na(ps_data_201540$crds_with) == T] <- 0
-ps_data_201540$cte_courses_201540[is.na(ps_data_201540$cte_courses_201540) == T] <- 0
-ps_data_201540$rem_courses_201540[is.na(ps_data_201540$rem_courses_201540) == T] <- 0
-ps_data_201540$PELL_ELIG <- as.double(ps_data_201540$PELL_ELIG)
-ps_data_201540$PELL_ELIG[is.na(ps_data_201540$PELL_ELIG) == T] <- 0
-ps_data_201540$eth <- as.factor(ps_data_201540$eth)
-ps_data_201540$eth[is.na(ps_data_201540$eth) == T] <- "oth_eth"
-ps_data_201540$first_gen <- as.factor(ps_data_201540$first_gen)
+ps_ff_gpa %>% ggplot() + 
+  geom_histogram(aes(ps_ff_gpa_gbm, col = as.factor(promise_p)))
 
-# both 201540 & 201620
-
-int_join <- pre_201540 %>% inner_join(pre_201620, by = "PIDM")
-ps_1516 <- elig_2016_set %>% inner_join(int_join, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
-rm(int_join)
-# dim(ps_1516) # 7118 by 38
-
-ps_1516$crds_fails[is.na(ps_1516$crds_fails) == T] <- 0
-ps_1516$crds_with[is.na(ps_1516$crds_with) == T] <- 0
-ps_1516$cte_courses_201540[is.na(ps_1516$cte_courses_201540) == T] <- 0
-ps_1516$rem_courses_201540[is.na(ps_1516$rem_courses_201540) == T] <- 0
-ps_1516$cte_courses_201620[is.na(ps_1516$cte_courses_201620) == T] <- 0
-ps_1516$rem_courses_201620[is.na(ps_1516$rem_courses_201620) == T] <- 0
-ps_1516$PELL_ELIG <- as.double(ps_1516$PELL_ELIG)
-ps_1516$PELL_ELIG[is.na(ps_1516$PELL_ELIG) == T] <- 0
-ps_1516$eth <- as.factor(ps_1516$eth)
-ps_1516$eth[is.na(ps_1516$eth) == T] <- "oth_eth"
-ps_1516$first_gen <- as.factor(ps_1516$first_gen)
+ff_gpa_2016_gbm_sum <- summary(ff_gpa_2016_gbm)
+ff_gpa_2016_gbm_sum
 ```
+
+## ff_nogpa ps
+```{r, echo=FALSE}
+set.seed(42)
+ff_nogpa_2016_gbm <- train(as.factor(promise_p) ~ ., 
+               data = ff_nogpa_2016[,!(names(ff_nogpa_2016) %in% c('PIDM', 'TERM_CODE', 'COHORT_MIN_TERM',
+                                                               'PELL_ELIG', 'ret1720', 'ret1740', 'zip', 'first_sem',
+                                                               'CUM_GPA_OVERALL', 'CUM_EARNED_OVERALL',
+                                                               'math', 'engl', 'inst', 'cte_career', 'rem_career',
+                                                               'fails_career', 'withs_career', 'mean_crd_att', 'avg_cls_sz',
+                                                               'term_gpa_201640'))], 
+               method = "gbm", 
+               trControl = trainControl(method = "cv", 
+                                        number = 10, 
+                                        verboseIter = TRUE))
+
+ff_nogpa_pred <- predict(ff_nogpa_2016_gbm, ff_nogpa_2016, type = "prob")
+ps_ff_nogpa_gbm <- cbind(ff_nogpa_pred$`1`)
+ps_ff_nogpa <- data.frame(ff_nogpa_2016, ps_ff_nogpa_gbm)
+
+ps_ff_nogpa %>% ggplot() + 
+  geom_histogram(aes(ps_ff_nogpa_gbm, col = as.factor(promise_p)))
+
+ff_nogpa_2016_gbm_sum <- summary(ff_nogpa_2016_gbm)
+ff_nogpa_2016_gbm_sum
+```
+
 
 # modeling promise inclusion first.
-
 As per Webb. Model retention first based on 
+
+# Jessie's idea
+Generate propensity scores for all exact match on minimum cohort year. match on zip.
+- how to flag students who have tested out of Math courses? 
+- hos to flag students who haven't taken either math or engl?
+
+# check
+- credits failed, still check the new fails_careers
+- credits with
+-  blah <- full_data_awards %>% filter(PELL_ELIG == 1 & FAFSA == 0) not good
+
+
+# make
+- highest math course number. done
+- highest engl course number. done
+- fed loan career. done
+- private loan career. done
+- former concurrent from student_list when you get back. 
+
+# consideration
+- run first semesters seperately 
+
+## matching CS_GPA ret1720
+```{r, echo=FALSE}
+# matching
+library(Matching)
+# cs_gpa_2016 matching using ps_cs_gpa
+
+Y <- ps_cs_gpa$ret1720
+Tr <- ps_cs_gpa$promise_p
+X <- ps_cs_gpa$ps_cs_gpa_gbm
+by <- as.factor(ps_cs_gpa$COHORT_MIN_TERM)
+match_cs_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_cs_gpa)
+
+# MatchBalance
+mb_match_cs_gpa <- MatchBalance(ps_cs_gpa$promise_p ~ 
+                                  ps_cs_gpa$term_age + ps_cs_gpa$male + ps_cs_gpa$first_gen + ps_cs_gpa$eth +
+                                  ps_cs_gpa$CUM_GPA_OVERALL + ps_cs_gpa$CUM_EARNED_OVERALL + 
+                                  ps_cs_gpa$inst + ps_cs_gpa$rem_career + ps_cs_gpa$cte_career + 
+                                  ps_cs_gpa$fed_career + ps_cs_gpa$pri_career + ps_cs_gpa$math +
+                                  ps_cs_gpa$engl + ps_cs_gpa$avg_cls_sz + ps_cs_gpa$fails_career + 
+                                  ps_cs_gpa$withs_career + ps_cs_gpa$mean_crd_att + ps_cs_gpa$term_gpa_201640, 
+                                match.out = match_cs_gpa, ks = T, nboots = 500)
+
+mbps_match_cs_gpa <- MatchBalance(ps_cs_gpa$promise_p ~ ps_cs_gpa$ps_cs_gpa_gbm, 
+                                  match.out = match_cs_gpa, ks = T, nboots = 500)
+
+```
+No significant impact on retention for Spring 2017.
+
+#### cs_gpa match plots
+```{r, echo=FALSE}
+# mean_crd_att
+ggplot() + geom_histogram(aes(ps_cs_gpa$mean_crd_att[match_cs_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$mean_crd_att[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+# term_age
+ggplot() + geom_histogram(aes(ps_cs_gpa$term_age[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$term_age[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated term age")
+
+# fed_career
+ggplot() + geom_histogram(aes(ps_cs_gpa$fed_career[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$fed_career[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated fed loans career")
+
+# cum_gpa_overall
+ggplot() + geom_histogram(aes(ps_cs_gpa$CUM_GPA_OVERALL[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$CUM_GPA_OVERALL[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated cummulative gpa")
+
+# cum_earned_overall
+ggplot() + geom_histogram(aes(ps_cs_gpa$CUM_EARNED_OVERALL[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$CUM_EARNED_OVERALL[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated credits earned")
+
+# avg_cl_sz
+ggplot() + geom_histogram(aes(ps_cs_gpa$avg_cls_sz[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$avg[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated average class size")
+
+# rem career
+ggplot() + geom_histogram(aes(ps_cs_gpa$rem_career[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$rem_career[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+# inst
+ggplot() + geom_histogram(aes(ps_cs_gpa$inst[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$inst[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated instruction type")
+
+# male
+ggplot() + geom_histogram(aes(ps_cs_gpa$male[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$male[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated male")
+
+# term_gpa_201640
+ggplot() + geom_histogram(aes(ps_cs_gpa$term_gpa_201640[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$term_gpa_201640[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated term gpa 201640 score")
+
+# ps score
+ggplot() + geom_histogram(aes(ps_cs_gpa$ps_cs_gpa_gbm[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$ps_cs_gpa_gbm[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated ps score")
+
+# ret1720
+ggplot() + geom_histogram(aes(ps_cs_gpa$ret1720[match_cs_gpa$index.treated]), col = "red", alpha = .0) + 
+  geom_histogram(aes(ps_cs_gpa$ret1720[match_cs_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated retention")
+```
+
+## matching CS_GPA term_gpa_201720
+```{r, echo=FALSE}
+# term_gpa_201720 outcome variable
+# cs_gpa_2016 matching using ps_cs_gpa
+
+Y_gpa <- ps_cs_gpa$term_gpa_201640
+Tr <- ps_cs_gpa$promise_p
+X <- ps_cs_gpa$ps_cs_gpa_gbm
+by <- as.factor(ps_cs_gpa$COHORT_MIN_TERM)
+match_cs_gpa_term <- Matchby(Y = Y_gpa, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_cs_gpa_term)
+
+# MatchBalance
+mb_match_cs_gpa_term <- MatchBalance(ps_cs_gpa$promise_p ~ 
+                                  ps_cs_gpa$term_age + ps_cs_gpa$male + ps_cs_gpa$first_gen + ps_cs_gpa$eth +
+                                  ps_cs_gpa$CUM_GPA_OVERALL + ps_cs_gpa$CUM_EARNED_OVERALL + 
+                                  ps_cs_gpa$inst + ps_cs_gpa$rem_career + ps_cs_gpa$cte_career + 
+                                  ps_cs_gpa$fed_career + ps_cs_gpa$pri_career + ps_cs_gpa$math +
+                                  ps_cs_gpa$engl + ps_cs_gpa$avg_cls_sz + ps_cs_gpa$fails_career + 
+                                  ps_cs_gpa$withs_career + ps_cs_gpa$mean_crd_att, 
+                                match.out = match_cs_gpa, ks = T, nboots = 500)
+
+```
+No significant impact on grades.
+
+## matching FF_GPA ret1720
+```{r, echo=FALSE}
+Y <- ps_ff_gpa$ret1720
+Tr <- ps_ff_gpa$promise_p
+X <- ps_ff_gpa$ps_ff_gpa_gbm
+by <- as.factor(ps_ff_gpa$COHORT_MIN_TERM)
+match_ff_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_ff_gpa)
+
+# not surprising that they all match on min_cohort_term since they are all in their first term
+mb_match_ff_gpa <- MatchBalance(ps_ff_gpa$promise_p ~ 
+                                  ps_ff_gpa$term_age + ps_ff_gpa$male + 
+                                  ps_ff_gpa$CUM_GPA_OVERALL + ps_ff_gpa$CUM_EARNED_OVERALL + 
+                                  ps_ff_gpa$inst + ps_ff_gpa$rem_career + ps_ff_gpa$cte_career + 
+                                  ps_ff_gpa$fed_career + ps_ff_gpa$pri_career + ps_ff_gpa$math +
+                                  ps_ff_gpa$engl + ps_ff_gpa$avg_cls_sz + ps_ff_gpa$term_gpa_201640, 
+                                match.out = match_ff_gpa, ks = T, nboots = 500)
+
+
+```
+No significant impact on retention for Spring 2017.
+
+#### ff_gpa match plots
+```{r, echo=FALSE}
+# mean_crd_att
+ggplot() + geom_histogram(aes(ps_ff_gpa$mean_crd_att[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$mean_crd_att[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+# fed career
+ggplot() + geom_histogram(aes(ps_ff_gpa$fed_career[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$fed_career[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated federal loan career")
+
+# term age
+ggplot() + geom_histogram(aes(ps_ff_gpa$term_age[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$term_age[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated term age")
+
+# cum-earned-overall
+ggplot() + geom_histogram(aes(ps_ff_gpa$CUM_EARNED_OVERALL[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$CUM_EARNED_OVERALL[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated cumulative earned credits")
+
+# cum_gpa_overall
+ggplot() + geom_histogram(aes(ps_ff_gpa$CUM_GPA_OVERALL[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$CUM_GPA_OVERALL[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated cumulative gpa")
+
+# rem_career
+ggplot() + geom_histogram(aes(ps_ff_gpa$rem_career[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$rem_career[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated remedial career")
+
+# cte_career
+ggplot() + geom_histogram(aes(ps_ff_gpa$cte_career[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$cte_career[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated cte career")
+
+# fails_career
+ggplot() + geom_histogram(aes(ps_ff_gpa$fails_career[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$fails_career[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated career fails")
+
+# inst
+ggplot() + geom_histogram(aes(ps_ff_gpa$inst[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$inst[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated instruction type")
+
+# avg_cls_size
+ggplot() + geom_histogram(aes(ps_ff_gpa$avg_cls_sz[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$avg_cls_sz[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated average class size")
+
+# term_gpa_201740
+ggplot() + geom_histogram(aes(ps_ff_gpa$term_gpa_201640[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$term_gpa_201640[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated term gpa 201640")
+
+# ps 
+ggplot() + geom_histogram(aes(ps_ff_gpa$ps_ff_gpa_gbm[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$ps_ff_gpa_gbm[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated ps")
+
+# ret1720
+ggplot() + geom_histogram(aes(ps_ff_gpa$ret1720[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$ret1720[match_ff_gpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated retention")
+
+```
+
+## matching ff_gpa term_gpa_201720
+```{r, echo=FALSE}
+Y_gpa <- ps_ff_gpa$term_gpa_201640
+Tr <- ps_ff_gpa$promise_p
+X <- ps_ff_gpa$ps_ff_gpa_gbm
+by <- as.factor(ps_ff_gpa$COHORT_MIN_TERM)
+match_ff_gpa_term <- Matchby(Y = Y_gpa, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_ff_gpa_term)
+
+# not surprising that they all match on min_cohort_term since they are all in their first term
+mb_match_ff_gpa_term <- MatchBalance(ps_ff_gpa$promise_p ~ 
+                                  ps_ff_gpa$term_age + ps_ff_gpa$male + 
+                                  ps_ff_gpa$CUM_GPA_OVERALL + ps_ff_gpa$CUM_EARNED_OVERALL + 
+                                  ps_ff_gpa$inst + ps_ff_gpa$rem_career + ps_ff_gpa$cte_career + 
+                                  ps_ff_gpa$fed_career + ps_ff_gpa$pri_career + ps_ff_gpa$math +
+                                  ps_ff_gpa$engl + ps_ff_gpa$avg_cls_sz, 
+                                match.out = match_ff_gpa, ks = T, nboots = 500)
+
+
+```
+No significant impact on grades.
+
+## matching ff_nogpa ret1720
+```{r, echo=FALSE}
+Y <- ps_ff_nogpa$ret1720
+Tr <- ps_ff_nogpa$promise_p
+X <- ps_ff_nogpa$ps_ff_nogpa_gbm
+by <- as.factor(ps_ff_nogpa$COHORT_MIN_TERM)
+match_ff_nogpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_ff_nogpa)
+
+# not surprising that they all match on min_cohort_term since they are all in their first term
+```
+No significant impact on retention for Spring 2017.
+
+#### ff-nogpa match plots
+```{r, echo=FALSE}
+# fed_career
+ggplot() + geom_histogram(aes(ps_ff_nogpa$fed_career[match_ff_nogpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_nogpa$fed_career[match_ff_nogpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+# term age
+ggplot() + geom_histogram(aes(ps_ff_nogpa$term_age[match_ff_nogpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_nogpa$term_age[match_ff_nogpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+# term gpa 201640
+ggplot() + geom_histogram(aes(ps_ff_nogpa$term_gpa_201640[match_ff_nogpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_nogpa$term_gpa_201640[match_ff_nogpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+# ps 
+ggplot() + geom_histogram(aes(ps_ff_nogpa$ps_ff_nogpa_gbm[match_ff_nogpa$index.treated]), col = "red",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_nogpa$ps_ff_nogpa_gbm[match_ff_nogpa$index.control]), alpha = 0.3) + 
+  xlab("red = treated mean_crd_att")
+
+```
+
+## ff_nogpa term_gpa_201720
+```{r, echo=FALSE}
+Y_term <- ps_ff_nogpa$term_gpa_201640
+Tr <- ps_ff_nogpa$promise_p
+X <- ps_ff_nogpa$ps_ff_nogpa_gbm
+by <- as.factor(ps_ff_nogpa$COHORT_MIN_TERM)
+match_ff_nogpa_term <- Matchby(Y = Y_term, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_ff_nogpa_term)
+
+# not surprising that they all match on min_cohort_term since they are all in their first term
+```
+No significant impact on grades.
+
+### summarising output
+```{r, echo=FALSE}
+# mb_match_cs_gpa$BeforeMatching[[2]]["mean.Co"]
+
+pre_post_balance <- list()
+
+function(df, phase, x, group){
+  pre_post_balance <- df$phase[[x]][group]
+}
+
+```
+
+# APPENDIX
 
 ```{r, echo=FALSE, eval=FALSE}
 library(caret)
@@ -682,14 +1057,7 @@ ps_caret_gbm %>%
   ylab("") 
 ```
 
-# Jessie's idea
-
-
-Generate propensity scores for all exact match on minimum cohort year. match on zip.
-- how to flag students who have tested out of Math courses? 
-- hos to flag students who haven't taken either math or engl?
-
-```{r, echo=FALSE}
+```{r, echo=FALSE, eval=FALSE}
 # select students enrolled in 201640 who did not graduate in 201640
 full_data_awards$PIDM <- as.character(full_data_awards$PIDM)
 pidm_201640 <- full_data_awards %>% 
@@ -768,41 +1136,104 @@ fixed_cov <- full_data_awards %>%
 ps_set <- 
 ```
 
-# check
-
-- credits failed, still check the new fails_careers
-- credits with
--  blah <- full_data_awards %>% filter(PELL_ELIG == 1 & FAFSA == 0) not good
-
-
-# make
-
-- highest math course number. done
-- highest engl course number. done
-- fed loan career. done
-- private loan career. done
-- former concurrent from student_list when you get back. 
-
-# consideration
-
-- run first semesters seperately 
-
-```{r, echo=FALSE}
-library(caret)
-model_gbm <- train(as.factor(promise_p) ~ . -PIDM, 
-                  data = ps_set, 
-               method = "gbm", 
-               trControl = trainControl(method = "cv", 
-                                        number = 10, 
-                                        verboseIter = TRUE))
+```{r, echo = FALSE, eval=FALSE}
+# joining pre 201640 matching covariates
+# pre_201640 <- full_join(pre_201540, pre_201620,  by = "PIDM")
+# 
+# ps_data <- elig_2016_set %>% inner_join(pre_201640, by = "PIDM")
+# 
+# ps_data <- ps_data %>% filter(is.na(CUM_GPA_OVERALL) == F)
+# not necessary with the new matching procejure
 
 ```
 
+```{r, echo=FALSE, eval=FALSE}
+# two seperate matches
+# 201620 
+# ps_data_201620 <- elig_2016_set %>% inner_join(pre_201620, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
+# # dim(ps_data_201620) # 9671 by 26
+# # NAs
+# ps_data_201620$crds_fails[is.na(ps_data_201620$crds_fails) == T] <- 0
+# ps_data_201620$crds_with[is.na(ps_data_201620$crds_with) == T] <- 0
+# ps_data_201620$cte_courses_201620[is.na(ps_data_201620$cte_courses_201620) == T] <- 0
+# ps_data_201620$rem_courses_201620[is.na(ps_data_201620$rem_courses_201620) == T] <- 0
+# ps_data_201620$PELL_ELIG <- as.double(ps_data_201620$PELL_ELIG)
+# ps_data_201620$PELL_ELIG[is.na(ps_data_201620$PELL_ELIG) == T] <- 0
+# ps_data_201620$eth <- as.factor(ps_data_201620$eth)
+# ps_data_201620$eth[is.na(ps_data_201620$eth) == T] <- "oth_eth"
+# ps_data_201620$first_gen <- as.factor(ps_data_201620$first_gen)
+# 
+# # 201540
+# ps_data_201540 <- elig_2016_set %>% inner_join(pre_201540, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
+# # dim(ps_data_201540) # 8548 by 26
+# #NAs
+# ps_data_201540$crds_fails[is.na(ps_data_201540$crds_fails) == T] <- 0
+# ps_data_201540$crds_with[is.na(ps_data_201540$crds_with) == T] <- 0
+# ps_data_201540$cte_courses_201540[is.na(ps_data_201540$cte_courses_201540) == T] <- 0
+# ps_data_201540$rem_courses_201540[is.na(ps_data_201540$rem_courses_201540) == T] <- 0
+# ps_data_201540$PELL_ELIG <- as.double(ps_data_201540$PELL_ELIG)
+# ps_data_201540$PELL_ELIG[is.na(ps_data_201540$PELL_ELIG) == T] <- 0
+# ps_data_201540$eth <- as.factor(ps_data_201540$eth)
+# ps_data_201540$eth[is.na(ps_data_201540$eth) == T] <- "oth_eth"
+# ps_data_201540$first_gen <- as.factor(ps_data_201540$first_gen)
+# 
+# # both 201540 & 201620
+# 
+# int_join <- pre_201540 %>% inner_join(pre_201620, by = "PIDM")
+# ps_1516 <- elig_2016_set %>% inner_join(int_join, by = "PIDM") %>% filter(is.na(CUM_GPA_OVERALL) == FALSE)
+# rm(int_join)
+# # dim(ps_1516) # 7118 by 38
+# 
+# ps_1516$crds_fails[is.na(ps_1516$crds_fails) == T] <- 0
+# ps_1516$crds_with[is.na(ps_1516$crds_with) == T] <- 0
+# ps_1516$cte_courses_201540[is.na(ps_1516$cte_courses_201540) == T] <- 0
+# ps_1516$rem_courses_201540[is.na(ps_1516$rem_courses_201540) == T] <- 0
+# ps_1516$cte_courses_201620[is.na(ps_1516$cte_courses_201620) == T] <- 0
+# ps_1516$rem_courses_201620[is.na(ps_1516$rem_courses_201620) == T] <- 0
+# ps_1516$PELL_ELIG <- as.double(ps_1516$PELL_ELIG)
+# ps_1516$PELL_ELIG[is.na(ps_1516$PELL_ELIG) == T] <- 0
+# ps_1516$eth <- as.factor(ps_1516$eth)
+# ps_1516$eth[is.na(ps_1516$eth) == T] <- "oth_eth"
+# ps_1516$first_gen <- as.factor(ps_1516$first_gen)
 
 
-```{r, echo=FALSE}
-# matching
-library(Matching)
-
+# no NAs in the new matching analysis
 ```
 
+```{r, echo=FALSE, eval=FALSE}
+# trying matching on zip.... doesn't help
+Y <- ps_cs_gpa$ret1720
+Tr <- ps_cs_gpa$promise_p
+X <- ps_cs_gpa$ps_cs_gpa_gbm
+by <- as.factor(ps_cs_gpa$zip)
+match_cs_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+summary(match_cs_gpa)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+# trying matching on zip.... doesn't help
+Y <- ps_ff_gpa$ret1720
+Tr <- ps_ff_gpa$promise_p
+X <- ps_ff_gpa$ps_ff_gpa_gbm
+by <- as.factor(ps_ff_gpa$zip)
+match_ff_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_ff_gpa)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+# trying matching on zip.... doesn't help
+Y <- ps_ff_nogpa$ret1720
+Tr <- ps_ff_nogpa$promise_p
+X <- ps_ff_nogpa$ps_ff_nogpa_gbm
+by <- as.factor(ps_ff_nogpa$zip)
+match_ff_nogpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
+                        estimand = "ATT", M = 1, AI = TRUE,
+                        caliper = .25)
+
+summary(match_ff_nogpa)
+```
