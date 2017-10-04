@@ -5,8 +5,8 @@ date: "8/24/2017"
 output: pdf_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
 ```
 # project info
 started 8/24/2017
@@ -161,7 +161,7 @@ ORDER BY STUDENT_COURSE_ENROLLMENTS.TERM_CODE;
 ```
 
 ## loading basic data manipulation package libraries
-```{r, include=FALSE, echo=FALSE}
+```{r, include=FALSE, echo=T, message=F}
 library(lubridate)
 library(tidyverse); theme_set(theme_minimal())
 ```
@@ -169,14 +169,14 @@ library(tidyverse); theme_set(theme_minimal())
 ## importing base data from sql pull above. 
 - student/term/course level
 - aggregation and transformation will be done in R. 
-```{r, echo=T, include=FALSE}
+```{r, echo=T, include=T, message=F}
 ret_data <- read_csv("retention_study.csv")
 ```
 
 # Data cleaning and manipulation
 
 \begin{itemize}
-\item remove duplicate PIDM, ENROll_TERMS, and CRN, etc
+\item remove duplicate PIDM, ENROll TERMS, and CRN, etc
 \item calculate age at term
 \item min and max course begin time
 \item gender dummy
@@ -191,7 +191,7 @@ ret_data <- read_csv("retention_study.csv")
 Data should end up at student/term level. Data is starting out at student/course/term level. 
 
 ## importing raw term entry action data.
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 retention_flag_raw <- read_csv("retenion_flag_raw.csv") # yes, it is spelled wrong
 
 # fixing the terms field
@@ -211,7 +211,7 @@ rm(retention_flag_raw)
 ```
 
 ## joining retention/term entry action data to ret_data.
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 ret_data <- ret_data[, !names(ret_data) %in% c("CRN_1", "TERM_CODE_1", "TERM_CODE_2", "PIDM_1", "PIDM_2", "ENROLL_TERM")]
 ret_data <- ret_data %>% 
   left_join(ret_flag_data, by = c("PIDM" = "PIDM", "TERM_CODE" = "ENROLL_TERM"))
@@ -219,7 +219,7 @@ rm(ret_flag_data)
 ```
 
 ## importing term start date data
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 stvterm <- read_csv("stvterm.csv")
 ret_data <- ret_data %>% left_join(stvterm, by = c("TERM_CODE" = "STVTERM_CODE"))
 
@@ -231,7 +231,7 @@ rm(stvterm)
 ```
 
 ## creating/transforming variables into aggregates
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 # instrcution type simplification
 ret_data$inst_type <- ifelse(ret_data$INSTRUCTION_TYPE == "Lecture/Lab" | 
                                ret_data$INSTRUCTION_TYPE == "Lecture", "L", 
@@ -367,7 +367,7 @@ ret_data <- ret_data %>% left_join(mean_crd_att, by = "PIDM")
 - This section looks good. ret1740 hasn't been added to banner yet but when it is, re-run the SQL and then they data will be ready for matching. 
 
 ## joining variables to data
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 # student/term level data to calculate. These will be joined to a student/terms data frame later
 student_term_calc <- ret_data %>% group_by(PIDM, TERM_CODE) %>%
   dplyr::summarise(max_time = max(COURSE_BEGIN_TIME), 
@@ -444,7 +444,7 @@ rm(awards, cte_courses, rem_courses, cte_career, rem_career,
 - Joins checkout, column naming was correct. 
 
 ## creating sub matching groups
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 
 # grouping by students with and without a cum_gpa_overall. Most of the 440 ff w/gpa are probably former concurrent
 cs_gpa_2016 <-  full_data_awards %>%
@@ -486,7 +486,7 @@ ff_gpa_2016 <- full_data_awards %>%
 - Just filtering down full_data_awards. 
 
 -NA problem with ethnicity variable
-```{r, echo=FALSE}
+```{r, echo=T, message=F}
 # fixing an NA problem with the sub-groups
 cs_gpa_2016$eth[is.na(cs_gpa_2016$eth)] <- "oth_eth"
 ff_gpa_2016$eth[is.na(ff_gpa_2016$eth)] <- "oth_eth"
@@ -513,7 +513,7 @@ These students have a COHORT_MIN_TERM == 201640. Technically these students are 
 - These students are essentially being matched on non-academic variables. fed_career and pri_career are left in since some of these students seem to have prior academic loans. They either were for education that would not count for SLCC or the student didn't bother to transfer credits. These are left in since there might be "non-FTFT" students in the FTFT student group, if this distinction is significant then leaving in these variables will allow for that impact to be represented somewhere.
 
 ## cs_gpa ps
-```{r, echo=FALSE}
+```{r, echo=T, results=F, warning=F, message=F}
 library(caret)
 # using gbm since it is easy to use
 # gbm for cs_gpa_2016
@@ -537,8 +537,12 @@ cs_gpa_2016_gbm_sum <- summary(cs_gpa_2016_gbm)
 cs_gpa_2016_gbm_sum
 ```
 
+```{r, echo=T, warning=F, message=F}
+cs_gpa_2016_gbm_sum
+```
+
 ## ff_gpa ps
-```{r, echo=FALSE}
+```{r, echo=T, results=F, warning=F, message=F}
 # gbm for ff_gpa
 set.seed(42)
 ff_gpa_2016_gbm <- train(as.factor(promise_p) ~ ., 
@@ -561,8 +565,12 @@ ff_gpa_2016_gbm_sum <- summary(ff_gpa_2016_gbm)
 ff_gpa_2016_gbm_sum
 ```
 
+```{r, echo=T, warning=F, message=F}
+ff_gpa_2016_gbm_sum
+```
+
 ## ff_nogpa ps
-```{r, echo=FALSE}
+```{r, echo=T, results=F, warning=F, message=F}
 set.seed(42)
 ff_nogpa_2016_gbm <- train(as.factor(promise_p) ~ ., 
                data = ff_nogpa_2016[,!(names(ff_nogpa_2016) %in% c('PIDM', 'TERM_CODE', 'COHORT_MIN_TERM',
@@ -584,6 +592,9 @@ ps_ff_nogpa %>% ggplot() +
   geom_histogram(aes(ps_ff_nogpa_gbm, col = as.factor(promise_p)))
 
 ff_nogpa_2016_gbm_sum <- summary(ff_nogpa_2016_gbm)
+```
+
+```{r, echo=T, warning=F, message=F}
 ff_nogpa_2016_gbm_sum
 ```
 
@@ -615,7 +626,7 @@ Generate propensity scores for all exact match on minimum cohort year. match on 
 - not all CS had gpa. like 44, they were dropped. 
 # results
 ## matching CS_GPA ret1720
-```{r, echo=FALSE}
+```{r, echo=T, results=F, warning=F, message=F}
 # matching
 library(Matching)
 # cs_gpa_2016 matching using ps_cs_gpa
@@ -628,7 +639,7 @@ match_cs_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by,
                         estimand = "ATT", M = 1, AI = TRUE,
                         caliper = .25)
 
-summary(match_cs_gpa)
+
 rm(Y, Tr, X, by)
 # MatchBalance
 mb_match_cs_gpa <- MatchBalance(ps_cs_gpa$promise_p ~ 
@@ -644,10 +655,15 @@ mbps_match_cs_gpa <- MatchBalance(ps_cs_gpa$promise_p ~ ps_cs_gpa$ps_cs_gpa_gbm,
                                   match.out = match_cs_gpa, ks = T, nboots = 500)
 
 ```
+
+```{r, echo=T, warning=F, message=F}
+print(summary(match_cs_gpa))
+
+```
 No significant impact on retention for Spring 2017.
 
 #### cs_gpa match plots
-```{r, echo=FALSE}
+```{r, echo=T, warning=F, message=F}
 # mean_crd_att
 ggplot() + geom_histogram(aes(ps_cs_gpa$mean_crd_att[match_cs_gpa$index.treated]), col = "red",  alpha = .0) + 
   geom_histogram(aes(ps_cs_gpa$mean_crd_att[match_cs_gpa$index.control]), alpha = 0.3) + 
@@ -710,7 +726,7 @@ ggplot() + geom_histogram(aes(ps_cs_gpa$ret1720[match_cs_gpa$index.treated]), co
 ```
 
 ## matching CS_GPA term_gpa_201720*
-```{r, echo=FALSE}
+```{r, echo=T, results=F, warning=F, message=F}
 # term_gpa_201720 outcome variable
 # cs_gpa_2016 matching using ps_cs_gpa
 
@@ -722,7 +738,7 @@ match_cs_gpa_term <- Matchby(Y = Y_gpa, Tr = Tr, X = X, by = by,
                         estimand = "ATT", M = 1, AI = TRUE,
                         caliper = .25)
 
-summary(match_cs_gpa_term)
+
 rm(Y_gpa, Tr, X, by)
 # MatchBalance
 mb_match_cs_gpa_term <- MatchBalance(ps_cs_gpa$promise_p ~ 
@@ -733,12 +749,16 @@ mb_match_cs_gpa_term <- MatchBalance(ps_cs_gpa$promise_p ~
                                   ps_cs_gpa$engl + ps_cs_gpa$avg_cls_sz + ps_cs_gpa$fails_career + 
                                   ps_cs_gpa$withs_career + ps_cs_gpa$mean_crd_att, 
                                 match.out = match_cs_gpa, ks = T, nboots = 500)
+```
+
+```{r, echo=T, warning=F, message=F}
+print(summary(match_cs_gpa_term))
 
 ```
 Seems to be a small positive impact on grades. I think this isn't causal but correlation. Strength of schedule wasn't controlled for etc.
 
 ## matching FF_GPA ret1720*
-```{r, echo=FALSE}
+```{r, echo=T, results=F, warning=F, message=F}
 Y <- ps_ff_gpa$ret1720
 Tr <- ps_ff_gpa$promise_p
 X <- ps_ff_gpa$ps_ff_gpa_gbm
@@ -747,24 +767,26 @@ match_ff_gpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by,
                         estimand = "ATT", M = 1, AI = TRUE,
                         caliper = .25)
 
-summary(match_ff_gpa)
+
 rm(Y, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
-mb_match_ff_gpa <- MatchBalance(ps_ff_gpa$promise_p ~ 
-                                  ps_ff_gpa$term_age + ps_ff_gpa$male + 
-                                  ps_ff_gpa$CUM_GPA_OVERALL + ps_ff_gpa$CUM_EARNED_OVERALL + 
-                                  ps_ff_gpa$inst + ps_ff_gpa$rem_career + ps_ff_gpa$cte_career + 
-                                  ps_ff_gpa$fed_career + ps_ff_gpa$pri_career + ps_ff_gpa$math +
-                                  ps_ff_gpa$engl + ps_ff_gpa$avg_cls_sz + ps_ff_gpa$term_gpa_201640, 
-                                match.out = match_ff_gpa, ks = T, nboots = 500)
+# mb_match_ff_gpa <- MatchBalance(ps_ff_gpa$promise_p ~ 
+#                                   ps_ff_gpa$term_age + ps_ff_gpa$male + 
+#                                   ps_ff_gpa$CUM_GPA_OVERALL + ps_ff_gpa$CUM_EARNED_OVERALL + 
+#                                   ps_ff_gpa$inst + ps_ff_gpa$rem_career + ps_ff_gpa$cte_career + 
+#                                   ps_ff_gpa$fed_career + ps_ff_gpa$pri_career + ps_ff_gpa$math +
+#                                   ps_ff_gpa$engl + ps_ff_gpa$avg_cls_sz + ps_ff_gpa$term_gpa_201640, 
+#                                 match.out = match_ff_gpa, ks = T, nboots = 500)
+```
 
-
+```{r, echo=T, warning=F, message=F}
+print(summary(match_ff_gpa))
 ```
 No significant impact on retention for Spring 2017. Now seems to have an effect on retention????
 - Check that the ps scores aren't moving around.
 
 #### ff_gpa match plots
-```{r, echo=FALSE}
+```{r, echo=T, warning=F, message=F}
 # mean_crd_att
 ggplot() + geom_histogram(aes(ps_ff_gpa$mean_crd_att[match_ff_gpa$index.treated]), col = "red",  alpha = .0) + 
   geom_histogram(aes(ps_ff_gpa$mean_crd_att[match_ff_gpa$index.control]), alpha = 0.3) + 
@@ -833,7 +855,8 @@ ggplot() + geom_histogram(aes(ps_ff_gpa$ret1720[match_ff_gpa$index.treated]), co
 ```
 
 ## matching ff_gpa term_gpa_201720
-```{r, echo=FALSE}
+```{r, echo=T,  warning=F, message=F}
+# since they are already matched on min_cohort matching on zip
 Y_gpa <- ps_ff_gpa$term_gpa_201640
 Tr <- ps_ff_gpa$promise_p
 X <- ps_ff_gpa$ps_ff_gpa_gbm
@@ -842,39 +865,41 @@ match_ff_gpa_term <- Matchby(Y = Y_gpa, Tr = Tr, X = X, by = by,
                         estimand = "ATT", M = 1, AI = TRUE,
                         caliper = .25)
 
-summary(match_ff_gpa_term)
 rm(Y_gpa, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
-mb_match_ff_gpa_term <- MatchBalance(ps_ff_gpa$promise_p ~ 
-                                  ps_ff_gpa$term_age + ps_ff_gpa$male + 
-                                  ps_ff_gpa$CUM_GPA_OVERALL + ps_ff_gpa$CUM_EARNED_OVERALL + 
-                                  ps_ff_gpa$inst + ps_ff_gpa$rem_career + ps_ff_gpa$cte_career + 
-                                  ps_ff_gpa$fed_career + ps_ff_gpa$pri_career + ps_ff_gpa$math +
-                                  ps_ff_gpa$engl + ps_ff_gpa$avg_cls_sz, 
-                                match.out = match_ff_gpa, ks = T, nboots = 500)
+# mb_match_ff_gpa_term <- MatchBalance(ps_ff_gpa$promise_p ~ 
+                                #   ps_ff_gpa$term_age + ps_ff_gpa$male + 
+                                #   ps_ff_gpa$CUM_GPA_OVERALL + ps_ff_gpa$CUM_EARNED_OVERALL + 
+                                #   ps_ff_gpa$inst + ps_ff_gpa$rem_career + ps_ff_gpa$cte_career + 
+                                #   ps_ff_gpa$fed_career + ps_ff_gpa$pri_career + ps_ff_gpa$math +
+                                #   ps_ff_gpa$engl + ps_ff_gpa$avg_cls_sz, 
+                                # match.out = match_ff_gpa, ks = T, nboots = 500)
 
+print(summary(match_ff_gpa_term))
 
 ```
 No significant impact on grades.
 
 ## matching ff_nogpa ret1720
-```{r, echo=FALSE}
+```{r, echo=T, warning=F, message=F}
+# since they are already matched on cohort_min_term matching on zip
 Y <- ps_ff_nogpa$ret1720
 Tr <- ps_ff_nogpa$promise_p
 X <- ps_ff_nogpa$ps_ff_nogpa_gbm
-by <- as.factor(ps_ff_nogpa$COHORT_MIN_TERM)
+by <- as.factor(ps_ff_nogpa$zip)
 match_ff_nogpa <- Matchby(Y = Y, Tr = Tr, X = X, by = by, 
                         estimand = "ATT", M = 1, AI = TRUE,
                         caliper = .25)
 
-summary(match_ff_nogpa)
 rm(Y, Tr, X, by)
-# not surprising that they all match on min_cohort_term since they are all in their first term
+
+print(summary(match_ff_nogpa))
+
 ```
 No significant impact on retention for Spring 2017.
 
 #### ff-nogpa match plots
-```{r, echo=FALSE}
+```{r, echo=T, warning=F, message=F}
 # fed_career
 ggplot() + geom_histogram(aes(ps_ff_nogpa$fed_career[match_ff_nogpa$index.treated]), col = "red",  alpha = .0) + 
   geom_histogram(aes(ps_ff_nogpa$fed_career[match_ff_nogpa$index.control]), alpha = 0.3) + 
@@ -898,7 +923,7 @@ ggplot() + geom_histogram(aes(ps_ff_nogpa$ps_ff_nogpa_gbm[match_ff_nogpa$index.t
 ```
 
 ## ff_nogpa term_gpa_201720
-```{r, echo=FALSE}
+```{r, echo=T, warning=F, message=F}
 Y_term <- ps_ff_nogpa$term_gpa_201640
 Tr <- ps_ff_nogpa$promise_p
 X <- ps_ff_nogpa$ps_ff_nogpa_gbm
@@ -907,7 +932,7 @@ match_ff_nogpa_term <- Matchby(Y = Y_term, Tr = Tr, X = X, by = by,
                         estimand = "ATT", M = 1, AI = TRUE,
                         caliper = .25)
 
-summary(match_ff_nogpa_term)
+print(summary(match_ff_nogpa_term))
 rm(Y_gpa, Tr, X, by)
 # not surprising that they all match on min_cohort_term since they are all in their first term
 ```
@@ -926,6 +951,8 @@ function(df, phase, x, group){
 ```
 
 # APPENDIX
+
+Misc. code that was used along the way.
 
 ```{r, echo=FALSE, eval=FALSE}
 library(caret)
@@ -1250,5 +1277,49 @@ transfers <-  full_data_awards %>%
 
 TRANSFERS <- transfers %>% left_join(ret_data) %>% dplyr::distinct(PIDM, FIRST_NAME, MIDDLE_NAME, LAST_NAME, BIRTH_DATE)
 write_csv(TRANSFERS, "promise_20170920.csv")
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+# concurent students data request
+concurrent <- ff_gpa_2016 %>% dplyr::select(PIDM)
+write_csv(concurrent, "promise_retention_20170929.csv")
+```
+
+```{r, eval=FALSE, echo=FALSE}
+
+# ps cs_gpa
+cs_ps_plot <- ggplot() + geom_histogram(aes(ps_cs_gpa$ps_cs_gpa_gbm[match_cs_gpa$index.treated]), color = "#00abe1", alpha = .00) +
+  geom_histogram(aes(ps_cs_gpa$ps_cs_gpa_gbm[match_cs_gpa$index.control]), fill = "#ffcd00", alpha = 0.5) + 
+  xlab("Propensity score for promise inclusion") +
+  labs(title = "Propensity score comparison for continuing students Fall 2016") +
+  guides(color = "Promise students")
+  
+png(filename = "cs_gpa.png")
+cs_ps_plot
+dev.off()
+
+# ps ff_nogpa
+ff_nops_plot <- ggplot() + geom_histogram(aes(ps_ff_nogpa$ps_ff_nogpa_gbm[match_ff_nogpa$index.treated]), col = "#00abe1",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_nogpa$ps_ff_nogpa_gbm[match_ff_nogpa$index.control]), fill = "#ffcd00", alpha = 0.5) + 
+    xlab("Propensity score for promise inclusion") +
+  labs(title = "Propensity score comparison for first time Fall 2016 students with no records") +
+  guides(color = "Promise students")
+
+png(filename = "ff_nops_plot.png")
+ff_nops_plot
+dev.off()
+
+# ps ff_gpa
+ff_ps_plot <- ggplot() + geom_histogram(aes(ps_ff_gpa$ps_ff_gpa_gbm[match_ff_gpa$index.treated]), col = "#00abe1",  alpha = .0) + 
+  geom_histogram(aes(ps_ff_gpa$ps_ff_gpa_gbm[match_ff_gpa$index.control]), fill = "#ffcd00", alpha = 0.5) + 
+  xlab("Propensity score for promise inclusion") +
+  labs(title = "Propensity score comparison for first time Fall 2016 students with records") +
+  guides(color = "Promise students")
+
+png(filename = "ff_ps_plot.png")
+ff_ps_plot
+dev.off()
+
 ```
 
